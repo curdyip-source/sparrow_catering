@@ -1,0 +1,482 @@
+#root {
+  width: min(760px, calc(100% - 36px));
+  margin: 0 auto;
+  padding: 72px 0 72px;
+}
+
+.page-shell,
+.calculator-shell,
+.inline-form {
+  display: grid;
+}
+
+.page-shell,
+.calculator-shell,
+.calculator-card-wide {
+  gap: 20px;
+}
+
+.calculator-card {
+  padding: 30px;
+  border: 1px solid rgba(194, 151, 112, 0.16);
+  border-radius: 28px;
+  background: linear-gradient(180deg, #4e2f22 0%, #3a2319 100%);
+  box-shadow:
+    0 28px 64px rgba(10, 6, 4, 0.38),
+    inset 0 1px 0 rgba(255, 238, 219, 0.08);
+}
+
+.inline-form {
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.inline-form-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(180px, 220px);
+  gap: 12px;
+  align-items: end;
+}
+
+.schedule-field,
+.schedule-list,
+.schedule-row,
+.schedule-actions {
+  display: grid;
+}
+
+.schedule-field {
+  gap: 10px;
+}
+
+.field-label {
+  color: rgba(244, 226, 209, 0.86);
+  font-size: 0.92rem;
+}
+
+.field-label-wide {
+  grid-column: 1 / 3;
+}
+
+.schedule-list {
+  gap: 12px;
+}
+
+.schedule-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.schedule-row-primary {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(180px, 220px);
+}
+
+.schedule-row-removable {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(180px, 220px);
+}
+
+.schedule-actions {
+  grid-template-columns: auto auto;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.schedule-total {
+  justify-self: end;
+  color: rgba(243, 224, 208, 0.72);
+  font-size: 0.84rem;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+  color: rgba(244, 226, 209, 0.86);
+  font-size: 0.92rem;
+}
+
+.schedule-picker {
+  display: block;
+}
+
+.schedule-picker .react-datepicker-wrapper,
+.schedule-picker .react-datepicker__input-container {
+  display: block;
+  width: 100%;
+}
+
+input {
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(210, 170, 133, 0.18);
+  background: rgba(72, 43, 31, 0.84);
+  border-radius: 18px;
+  padding: 15px 16px;
+  min-height: 54px;
+  color: #fff4e8;
+  box-shadow: none;
+  background-clip: padding-box;
+}
+
+.schedule-picker-input {
+  width: 100%;
+}
+
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+button {
+  font: inherit;
+}
+
+.range-add-button {
+  border: 1px solid rgba(255, 238, 219, 0.18);
+  border-radius: 14px;
+  background: rgba(72, 43, 31, 0.84);
+  color: #fff8f0;
+  cursor: pointer;
+}
+
+.range-add-button {
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 36px;
+  justify-self: start;
+}
+
+.range-remove-button {
+  width: 40px;
+  height: 40px;
+  justify-self: end;
+  align-self: center;
+  padding: 0;
+  border: 1px solid rgba(255, 238, 219, 0.18);
+  border-radius: 12px;
+  background: rgba(72, 43, 31, 0.84);
+  color: #fff8f0;
+  cursor: pointer;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.hookahs-field {
+  align-self: start;
+}
+
+.hookahs-field-inline {
+  gap: 8px;
+}
+
+.react-datepicker {
+  border: 1px solid rgba(194, 151, 112, 0.2);
+  border-radius: 18px;
+  overflow: hidden;
+  background: #3b241b;
+  color: #fff4e8;
+  box-shadow: 0 20px 40px rgba(10, 6, 4, 0.32);
+}
+
+.react-datepicker__header {
+  background: #4e2f22;
+  border-bottom: 1px solid rgba(194, 151, 112, 0.16);
+}
+
+.react-datepicker__current-month,
+.react-datepicker-time__header,
+.react-datepicker-year-header,
+.react-datepicker__day-name,
+.react-datepicker__day,
+.react-datepicker__time-name,
+.react-datepicker__time-list-item {
+  color: #fff4e8;
+}
+
+.react-datepicker__day:hover,
+.react-datepicker__time-list-item:hover,
+.react-datepicker__month-text:hover,
+.react-datepicker__quarter-text:hover,
+.react-datepicker__year-text:hover {
+  background: rgba(255, 244, 232, 0.12);
+}
+
+.react-datepicker__day--selected,
+.react-datepicker__day--keyboard-selected,
+.react-datepicker__time-list-item--selected,
+.react-datepicker__month-text--selected,
+.react-datepicker__quarter-text--selected,
+.react-datepicker__year-text--selected {
+  background: #c98d63;
+  color: #1f120d;
+}
+
+.react-datepicker__time-container,
+.react-datepicker__time,
+.react-datepicker__time-box,
+.react-datepicker__time-list {
+  background: #3b241b;
+}
+
+.react-datepicker__triangle {
+  display: none;
+}
+
+.breakdown-list {
+  display: grid;
+}
+
+.breakdown-row,
+.summary-strip {
+  display: grid;
+}
+
+.breakdown-row {
+  padding: 15px 0;
+  border-bottom: 1px solid rgba(210, 170, 133, 0.12);
+  color: rgba(243, 224, 208, 0.84);
+  gap: 6px;
+}
+
+.breakdown-main,
+.breakdown-note,
+.summary-copy,
+.summary-meta {
+  display: grid;
+}
+
+.breakdown-main {
+  grid-template-columns: minmax(180px, 1fr) clamp(260px, 34vw, 360px) 120px;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.breakdown-main small,
+.breakdown-note small,
+.summary-copy small,
+.summary-meta span {
+  color: rgba(243, 224, 208, 0.62);
+}
+
+.breakdown-main small,
+.breakdown-note small,
+.summary-copy small {
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.breakdown-main small {
+  white-space: nowrap;
+  text-align: right;
+  transform: translateX(50px);
+}
+
+.breakdown-main strong {
+  text-align: right;
+}
+
+.breakdown-formula-placeholder {
+  visibility: hidden;
+}
+
+.breakdown-main strong,
+.summary-strip strong {
+  color: #fff4e8;
+}
+
+.summary-block {
+  display: grid;
+  gap: 14px;
+  margin-top: 22px;
+  margin-bottom: 0;
+}
+
+.summary-rounded {
+  display: grid;
+  gap: 4px;
+  padding: 8px 0 0;
+  justify-items: end;
+}
+
+.summary-total {
+  display: grid;
+  justify-items: end;
+}
+
+.summary-rounded small {
+  color: rgba(243, 224, 208, 0.62);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.summary-rounded strong {
+  color: #fff4e8;
+  font-size: 0.94rem;
+  text-align: right;
+}
+
+.summary-strip {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: flex-start;
+  padding: 18px 20px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 230, 205, 0.08);
+  background: rgba(72, 43, 31, 0.84);
+  color: #fff0e0;
+  box-shadow: none;
+  gap: 20px;
+}
+
+.summary-strip strong {
+  font-size: 1.35rem;
+  color: #fff8f0;
+}
+
+.summary-copy {
+  gap: 6px;
+}
+
+.summary-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+  padding: 0 4px;
+}
+
+.summary-meta span {
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.pdf-button {
+  justify-self: end;
+  margin-top: 40px;
+  padding: 12px 18px;
+  border: 1px solid rgba(255, 238, 219, 0.18);
+  border-radius: 14px;
+  background: rgba(72, 43, 31, 0.84);
+  color: #fff8f0;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    transform 160ms ease,
+    border-color 160ms ease;
+}
+
+.pdf-button:hover {
+  background: rgba(255, 244, 232, 0.14);
+  border-color: rgba(255, 238, 219, 0.28);
+  transform: translateY(-1px);
+}
+
+.pdf-button:active {
+  transform: translateY(0);
+}
+
+@media (max-width: 720px) {
+  #root {
+    width: min(100%, calc(100% - 24px));
+    padding-top: 28px;
+  }
+
+  .calculator-card {
+    padding: 22px;
+  }
+
+  .inline-form {
+    grid-template-columns: 1fr;
+  }
+
+  .schedule-row,
+  .schedule-actions,
+  .inline-form-head {
+    grid-template-columns: 1fr;
+  }
+
+  .schedule-row-removable {
+    grid-template-columns: 1fr;
+  }
+
+  .schedule-row-primary {
+    grid-template-columns: 1fr;
+  }
+
+  .schedule-total,
+  .range-add-button {
+    justify-self: stretch;
+  }
+
+  .range-remove-button {
+    width: 100%;
+  }
+
+  .breakdown-main {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .summary-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .pdf-button {
+    justify-self: stretch;
+  }
+}
+
+@media print {
+  #root {
+    width: 100%;
+    padding: 0;
+  }
+
+  .page-shell,
+  .calculator-shell,
+  .calculator-card-wide,
+  .summary-block {
+    gap: 12px;
+  }
+
+  .calculator-card {
+    padding: 26px;
+    border: 1px solid rgba(194, 151, 112, 0.16);
+    border-radius: 28px;
+    background: linear-gradient(180deg, rgba(78, 47, 34, 0.9) 0%, rgba(58, 35, 25, 0.94) 100%);
+    box-shadow: none;
+    color: #f2e5d6;
+  }
+
+  label,
+  .breakdown-row,
+  .summary-strip,
+  .summary-block,
+  .summary-meta span,
+  .summary-rounded small,
+  .breakdown-main small,
+  .breakdown-note small {
+    color: #f2e5d6;
+  }
+
+  .breakdown-main strong,
+  .summary-strip strong,
+  .summary-rounded strong {
+    color: #fff8f0;
+  }
+
+  .summary-strip {
+    border: 1px solid rgba(255, 230, 205, 0.08);
+    background: linear-gradient(180deg, rgba(92, 57, 41, 0.72) 0%, rgba(72, 43, 31, 0.84) 100%);
+    box-shadow: none;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

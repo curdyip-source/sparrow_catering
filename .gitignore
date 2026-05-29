@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+
+backend/.coverage
+backend/htmlcov/
+backend/sparrow.db
+backend/test.db
+docs/
+
+frontend/dist/
+frontend/node_modules/
