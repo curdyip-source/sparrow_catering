@@ -23,11 +23,7 @@ services:
     container_name: ${PROJECT_NAME}-backend
     env_file:
       - .env
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      FIRST_ADMIN_PASS: ${FIRST_ADMIN_PASS}
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT}"
+    command: sh -c "python -m app.db.wait_for_db && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT}"
     volumes:
       - ./backend:/app
     ports:
@@ -42,10 +38,6 @@ services:
     container_name: ${PROJECT_NAME}-celery
     env_file:
       - .env
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      FIRST_ADMIN_PASS: ${FIRST_ADMIN_PASS}
     command: celery -A app.worker.celery_app worker --loglevel=info
     volumes:
       - ./backend:/app
@@ -57,8 +49,8 @@ services:
     build:
       context: ./frontend
     container_name: ${PROJECT_NAME}-frontend
-    environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    env_file:
+      - .env
     command: npm run dev -- --host 0.0.0.0 --port ${FRONTEND_PORT}
     volumes:
       - ./frontend:/app
