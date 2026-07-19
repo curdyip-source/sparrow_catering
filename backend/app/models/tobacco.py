@@ -15,6 +15,7 @@ class TobaccoCatalog(Base):
     strength: Mapped[str] = mapped_column(String(64), index=True)
     brand: Mapped[str] = mapped_column(String(120), index=True)
     flavor_name: Mapped[str] = mapped_column(String(120), index=True)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     guest_preference_items: Mapped[list["GuestPreferenceItem"]] = relationship(back_populates="tobacco")

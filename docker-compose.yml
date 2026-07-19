@@ -10,6 +10,46 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # One-shot: on `up` overwrite the DB with the dump from the git-crypt volume.
+  db-restore:
+    image: postgres:16-alpine
+    container_name: ${PROJECT_NAME}-db-restore
+    env_file:
+      - .env
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./.volume:/backup
+      - ./docker/db-restore.sh:/db-restore.sh:ro
+    entrypoint: ["sh", "/db-restore.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # Sidecar: idles until `docker compose stop`/`down`, then dumps the DB to the volume.
+  db-backup:
+    image: postgres:16-alpine
+    container_name: ${PROJECT_NAME}-db-backup
+    env_file:
+      - .env
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./.volume:/backup
+      - ./docker/db-backup.sh:/db-backup.sh:ro
+    entrypoint: ["sh", "/db-backup.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    stop_grace_period: 2m
+    restart: "no"
 
   redis:
     image: redis:7-alpine
@@ -29,8 +69,12 @@ services:
     ports:
       - "${BACKEND_PORT}:${BACKEND_PORT}"
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      db-restore:
+        condition: service_completed_successfully
 
   celery:
     build:
@@ -42,8 +86,12 @@ services:
     volumes:
       - ./backend:/app
     depends_on:
-      - backend
-      - redis
+      backend:
+        condition: service_started
+      redis:
+        condition: service_started
+      db-restore:
+        condition: service_completed_successfully
 
   frontend:
     build:

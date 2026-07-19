@@ -76,6 +76,7 @@ type TobaccoItem = {
   strength: string
   brand: string
   flavor_name: string
+  description?: string | null
 }
 
 type GuestPreferenceItem = {
@@ -207,6 +208,7 @@ const initialTobaccoForm = {
   strength: '',
   brand: '',
   flavorName: '',
+  description: '',
 }
 
 function mapApiPricingConfig(payload: {
@@ -912,7 +914,7 @@ function AppShell() {
     try {
       await authorizedFetch('/api/v1/admin/tobacco', {
         method: 'POST',
-        body: JSON.stringify({ strength: tobaccoForm.strength, brand: tobaccoForm.brand, flavor_name: tobaccoForm.flavorName }),
+        body: JSON.stringify({ strength: tobaccoForm.strength, brand: tobaccoForm.brand, flavor_name: tobaccoForm.flavorName, description: tobaccoForm.description || null }),
       })
       resetTobaccoForm()
       setEditorOverlay(null)
@@ -1335,7 +1337,7 @@ function AppShell() {
               {adminTab === 'tobacco' ? (
                 <div className="admin-card list-card">
                   <div className="card-header"><div className="header-inline-actions"><h3>Каталог табака</h3><button type="button" className="inline-create-button" onClick={openCreateTobacco}>+ Новая позиция каталога</button></div><div className="header-search-slot"><input className="compact-input compact-input-narrow" placeholder="Поиск по бренду или аромату" value={tobaccoQuery} onChange={async (event) => { const value = event.target.value; setTobaccoQuery(value); if (adminUser) { try { await loadTobacco(value) } catch {} } }} /></div></div>
-                  <div className="stack-list stack-list-tight">{tobaccoCatalog.map((item) => <article key={item.id} className="list-item"><strong>{item.brand}</strong><p>{item.flavor_name}</p><span className="pill-inline">{item.strength}</span></article>)}</div>
+                  <div className="stack-list stack-list-tight">{tobaccoCatalog.map((item) => <article key={item.id} className="list-item"><strong>{item.brand}</strong><p>{item.flavor_name}</p>{item.description ? <p className="tobacco-description">{item.description}</p> : null}<span className="pill-inline">{item.strength}</span></article>)}</div>
                 </div>
               ) : null}
 
@@ -1389,7 +1391,7 @@ function AppShell() {
       ) : null}
 
       {editorOverlay === 'tobacco' ? (
-        <div className="modal-backdrop no-print" data-html2canvas-ignore="true"><div className="modal-card"><div className="card-header"><h3>Новая позиция каталога</h3><button type="button" className="ghost-button" onClick={() => setEditorOverlay(null)}>Закрыть</button></div><form className="form-card" onSubmit={handleCreateTobacco}><div className="form-grid"><label><span>Крепость</span><input value={tobaccoForm.strength} onChange={(event) => setTobaccoForm((current) => ({ ...current, strength: event.target.value }))} /></label><label><span>Бренд</span><input value={tobaccoForm.brand} onChange={(event) => setTobaccoForm((current) => ({ ...current, brand: event.target.value }))} /></label><label className="field-span-2"><span>Аромат</span><input value={tobaccoForm.flavorName} onChange={(event) => setTobaccoForm((current) => ({ ...current, flavorName: event.target.value }))} /></label></div><button type="submit" className="primary-button" disabled={tobaccoBusy}>{tobaccoBusy ? 'Сохраняю...' : 'Добавить в каталог'}</button></form></div></div>
+        <div className="modal-backdrop no-print" data-html2canvas-ignore="true"><div className="modal-card"><div className="card-header"><h3>Новая позиция каталога</h3><button type="button" className="ghost-button" onClick={() => setEditorOverlay(null)}>Закрыть</button></div><form className="form-card" onSubmit={handleCreateTobacco}><div className="form-grid"><label><span>Крепость</span><input value={tobaccoForm.strength} onChange={(event) => setTobaccoForm((current) => ({ ...current, strength: event.target.value }))} /></label><label><span>Бренд</span><input value={tobaccoForm.brand} onChange={(event) => setTobaccoForm((current) => ({ ...current, brand: event.target.value }))} /></label><label className="field-span-2"><span>Аромат</span><input value={tobaccoForm.flavorName} onChange={(event) => setTobaccoForm((current) => ({ ...current, flavorName: event.target.value }))} /></label><label className="field-span-2"><span>Описание</span><textarea value={tobaccoForm.description} onChange={(event) => setTobaccoForm((current) => ({ ...current, description: event.target.value }))} /></label></div><button type="submit" className="primary-button" disabled={tobaccoBusy}>{tobaccoBusy ? 'Сохраняю...' : 'Добавить в каталог'}</button></form></div></div>
       ) : null}
 
       {createOrderOpen ? (

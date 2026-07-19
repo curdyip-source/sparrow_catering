@@ -54,6 +54,7 @@ class TobaccoCreate(BaseModel):
     strength: str = Field(min_length=1, max_length=64)
     brand: str = Field(min_length=1, max_length=120)
     flavor_name: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=500)
 
 
 class TobaccoRead(TobaccoCreate):

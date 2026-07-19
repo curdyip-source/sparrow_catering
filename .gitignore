@@ -1,5 +1,8 @@
 .DS_Store
 .env
+
+# git-crypt symmetric key — encrypt this file before pushing
+.secrets/git-crypt-key
 .venv/
 __pycache__/
 .pytest_cache/
