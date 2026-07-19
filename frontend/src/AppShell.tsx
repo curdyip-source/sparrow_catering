@@ -770,32 +770,44 @@ function AppShell() {
   }
 
   const handleDownloadPdf = async () => {
-    const target = document.documentElement
+    // Снимаем только карточку расчёта (со своим тёмным фоном), а не всю страницу —
+    // иначе в кадр попадают отступы #root и получаются белые поля сверху/снизу.
+    const target = (document.querySelector('.calculator-card-wide') as HTMLElement | null) ?? document.documentElement
     const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas'), import('jspdf')])
     const canvas = await html2canvas(target, {
       scale: 2,
       useCORS: true,
-      foreignObjectRendering: true,
-      backgroundColor: null,
-      width: target.scrollWidth,
-      height: target.scrollHeight,
-      windowWidth: target.scrollWidth,
-      windowHeight: target.scrollHeight,
-      scrollX: 0,
-      scrollY: 0,
+      backgroundColor: '#3a2319',
+      onclone: (doc) => {
+        const card = doc.querySelector('.calculator-card-wide') as HTMLElement | null
+        if (card) {
+          // Убираем скруглённую светлую рамку и тень: контент ляжет в PDF впритык,
+          // прямоугольником, без «бортика» другого цвета вокруг.
+          card.style.borderRadius = '0'
+          card.style.border = 'none'
+          card.style.boxShadow = 'none'
+        }
+        // Чуть больше воздуха снизу в полях ввода, чтобы текст дат не подрезался.
+        doc.querySelectorAll('.calculator-card-wide input').forEach((node) => {
+          const input = node as HTMLElement
+          input.style.lineHeight = '1.2'
+          input.style.paddingBottom = '18px'
+        })
+      },
     })
 
     const imageData = canvas.toDataURL('image/png')
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true })
+    // Страница PDF ровно по размеру контента: изображение заполняет её целиком, без полей.
+    const pdf = new jsPDF({
+      orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+      unit: 'px',
+      format: [canvas.width, canvas.height],
+      compress: true,
+    })
     const pageWidth = pdf.internal.pageSize.getWidth()
     const pageHeight = pdf.internal.pageSize.getHeight()
-    const scale = Math.min(pageWidth / canvas.width, pageHeight / canvas.height)
-    const renderWidth = canvas.width * scale
-    const renderHeight = canvas.height * scale
-    const offsetX = (pageWidth - renderWidth) / 2
-    const offsetY = (pageHeight - renderHeight) / 2
 
-    pdf.addImage(imageData, 'PNG', offsetX, offsetY, renderWidth, renderHeight)
+    pdf.addImage(imageData, 'PNG', 0, 0, pageWidth, pageHeight)
     pdf.save(`sparrow-catering-${formatNumber(totalHours)}h-${calculator.hookahsCount}hookahs.pdf`)
   }
 
