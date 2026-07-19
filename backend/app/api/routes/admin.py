@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload
@@ -31,6 +33,7 @@ from app.schemas.admin import (
     OrderRead,
     OrderWorkRangeRead,
     TobaccoCreate,
+    TobaccoInventoryUpdate,
     TobaccoRead,
 )
 from app.schemas.pricing import PricingConfigRead, PricingConfigUpdate
@@ -226,6 +229,7 @@ def delete_company(
 @router.get("/tobacco", response_model=list[TobaccoRead])
 def list_tobacco(
     query: str = Query(default="", max_length=120),
+    limit: int = Query(default=500, ge=1, le=1000),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_admin),
 ) -> list[TobaccoRead]:
@@ -241,7 +245,7 @@ def list_tobacco(
             )
         )
 
-    items = db.scalars(statement.limit(50)).all()
+    items = db.scalars(statement.limit(limit)).all()
     return [TobaccoRead.model_validate(item) for item in items]
 
 
@@ -252,6 +256,36 @@ def create_tobacco(
     _: User = Depends(get_current_admin),
 ) -> TobaccoRead:
     item = TobaccoCatalog(**payload.model_dump())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return TobaccoRead.model_validate(item)
+
+
+@router.patch("/tobacco/{tobacco_id}/inventory", response_model=TobaccoRead)
+def update_tobacco_inventory(
+    tobacco_id: int,
+    payload: TobaccoInventoryUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> TobaccoRead:
+    item = db.scalar(select(TobaccoCatalog).where(TobaccoCatalog.id == tobacco_id))
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Позиция каталога не найдена")
+
+    if payload.tare_weight is not None:
+        item.tare_weight = payload.tare_weight
+    if payload.gross_weight is not None:
+        item.gross_weight = payload.gross_weight
+
+    # Чистый остаток: берём явно введённый, иначе считаем как вес с тарой минус вес тары.
+    if payload.net_weight is not None:
+        item.net_weight = payload.net_weight
+    elif item.gross_weight is not None and item.tare_weight is not None:
+        item.net_weight = item.gross_weight - item.tare_weight
+
+    item.stock_updated_at = datetime.now(timezone.utc)
+
     db.add(item)
     db.commit()
     db.refresh(item)

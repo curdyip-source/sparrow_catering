@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import DateTime, Float, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -16,6 +16,10 @@ class TobaccoCatalog(Base):
     brand: Mapped[str] = mapped_column(String(120), index=True)
     flavor_name: Mapped[str] = mapped_column(String(120), index=True)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    tare_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gross_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stock_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     guest_preference_items: Mapped[list["GuestPreferenceItem"]] = relationship(back_populates="tobacco")

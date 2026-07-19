@@ -648,3 +648,116 @@ textarea {
     text-align: right;
   }
 }
+
+/* Tobacco catalog card */
+.tobacco-card {
+  gap: 6px;
+}
+
+.tobacco-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tobacco-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tobacco-head .pill-inline {
+  flex: none;
+}
+
+.tobacco-description {
+  margin: 0;
+  font-size: 0.85rem;
+  color: rgba(243, 224, 208, 0.74);
+}
+
+/* Inventory */
+.inventory-search {
+  width: min(420px, 100%);
+  transform: none;
+}
+
+.inventory-table,
+.stock-table {
+  display: grid;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.inventory-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 110px 110px 120px auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 640px;
+}
+
+.inventory-row input {
+  width: 100%;
+}
+
+.inventory-head,
+.stock-head {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(243, 224, 208, 0.6);
+}
+
+.inventory-name {
+  display: grid;
+  gap: 2px;
+}
+
+.inventory-name small {
+  color: rgba(243, 224, 208, 0.6);
+}
+
+.inventory-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inventory-actions .primary-button {
+  padding: 8px 14px;
+}
+
+/* Stock */
+.stock-filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.stock-filters select {
+  min-width: 160px;
+}
+
+.stock-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(140px, 1.4fr) minmax(120px, 1fr) 140px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  border-radius: 14px;
+  min-width: 560px;
+}
+
+.stock-row:not(.stock-head) {
+  background: rgba(72, 43, 31, 0.4);
+}
+
+.stock-value {
+  font-weight: 600;
+  color: #c9f2d1;
+}
+
+.stock-empty {
+  color: rgba(243, 224, 208, 0.5);
+}

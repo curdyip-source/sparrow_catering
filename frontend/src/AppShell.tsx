@@ -77,6 +77,22 @@ type TobaccoItem = {
   brand: string
   flavor_name: string
   description?: string | null
+  tare_weight?: number | null
+  gross_weight?: number | null
+  net_weight?: number | null
+  stock_updated_at?: string | null
+}
+
+type InventoryRow = {
+  tobaccoId: number
+  brand: string
+  flavorName: string
+  strength: string
+  tare: string
+  gross: string
+  net: string
+  netManual: boolean
+  busy: boolean
 }
 
 type GuestPreferenceItem = {
@@ -409,7 +425,7 @@ function AppShell() {
   const [notice, setNotice] = useState('')
   const [noticeTone, setNoticeTone] = useState<'neutral' | 'error'>('neutral')
   const [adminPanelOpen, setAdminPanelOpen] = useState(false)
-  const [adminTab, setAdminTab] = useState<'companies' | 'guests' | 'tobacco' | 'orders' | 'pricing'>('companies')
+  const [adminTab, setAdminTab] = useState<'companies' | 'guests' | 'tobacco' | 'inventory' | 'stock' | 'orders' | 'pricing'>('companies')
   const [editorOverlay, setEditorOverlay] = useState<null | 'company' | 'guest' | 'tobacco'>(null)
   const [companies, setCompanies] = useState<Company[]>([])
   const [companyQuery, setCompanyQuery] = useState('')
@@ -420,6 +436,10 @@ function AppShell() {
   const [tobaccoQuery, setTobaccoQuery] = useState('')
   const [tobaccoForm, setTobaccoForm] = useState(initialTobaccoForm)
   const [tobaccoBusy, setTobaccoBusy] = useState(false)
+  const [inventoryQuery, setInventoryQuery] = useState('')
+  const [inventoryRows, setInventoryRows] = useState<InventoryRow[]>([])
+  const [stockBrand, setStockBrand] = useState('')
+  const [stockStrength, setStockStrength] = useState('')
   const [guests, setGuests] = useState<Guest[]>([])
   const [guestQuery, setGuestQuery] = useState('')
   const [guestForm, setGuestForm] = useState(initialGuestForm)
@@ -582,7 +602,7 @@ function AppShell() {
 
     const loadAdminData = async () => {
       try {
-        await Promise.all([loadCompanies(companyQuery), loadTobacco(tobaccoQuery), loadGuests(), loadOrders()])
+        await Promise.all([loadCompanies(companyQuery), loadTobacco(), loadGuests(), loadOrders()])
       } catch (error) {
         setNotice(error instanceof Error ? error.message : 'Не удалось загрузить админские данные')
         setNoticeTone('error')
@@ -643,6 +663,28 @@ function AppShell() {
         return haystack.includes(normalizedGuestQuery)
       })
     : guests
+
+  const matchesTobacco = (item: TobaccoItem, query: string) => {
+    const haystack = [item.brand, item.flavor_name, item.strength, item.description ?? ''].join(' ').toLowerCase()
+    return haystack.includes(query)
+  }
+
+  const normalizedTobaccoQuery = tobaccoQuery.trim().toLowerCase()
+  const filteredTobacco = normalizedTobaccoQuery
+    ? tobaccoCatalog.filter((item) => matchesTobacco(item, normalizedTobaccoQuery))
+    : tobaccoCatalog
+
+  const normalizedInventoryQuery = inventoryQuery.trim().toLowerCase()
+  const inventoryRowIds = new Set(inventoryRows.map((row) => row.tobaccoId))
+  const inventorySearchResults = normalizedInventoryQuery
+    ? tobaccoCatalog.filter((item) => !inventoryRowIds.has(item.id) && matchesTobacco(item, normalizedInventoryQuery)).slice(0, 12)
+    : []
+
+  const tobaccoBrands = Array.from(new Set(tobaccoCatalog.map((item) => item.brand))).sort((a, b) => a.localeCompare(b, 'ru'))
+  const tobaccoStrengths = Array.from(new Set(tobaccoCatalog.map((item) => item.strength))).sort((a, b) => a.localeCompare(b, 'ru'))
+  const filteredStock = tobaccoCatalog.filter(
+    (item) => (!stockBrand || item.brand === stockBrand) && (!stockStrength || item.strength === stockStrength),
+  )
 
   const resetCompanyForm = () => {
     setCompanyForm(initialCompanyForm)
@@ -926,6 +968,86 @@ function AppShell() {
       setNoticeTone('error')
     } finally {
       setTobaccoBusy(false)
+    }
+  }
+
+  const addInventoryRow = (item: TobaccoItem) => {
+    setInventoryRows((current) => {
+      if (current.some((row) => row.tobaccoId === item.id)) {
+        return current
+      }
+      const nextRow: InventoryRow = {
+        tobaccoId: item.id,
+        brand: item.brand,
+        flavorName: item.flavor_name,
+        strength: item.strength,
+        tare: item.tare_weight != null ? item.tare_weight.toString() : '',
+        gross: item.gross_weight != null ? item.gross_weight.toString() : '',
+        net: item.net_weight != null ? item.net_weight.toString() : '',
+        netManual: item.net_weight != null,
+        busy: false,
+      }
+      return [...current, nextRow]
+    })
+    setInventoryQuery('')
+  }
+
+  const removeInventoryRow = (tobaccoId: number) => {
+    setInventoryRows((current) => current.filter((row) => row.tobaccoId !== tobaccoId))
+  }
+
+  const updateInventoryRow = (tobaccoId: number, field: 'tare' | 'gross' | 'net', value: string) => {
+    setInventoryRows((current) =>
+      current.map((row) => {
+        if (row.tobaccoId !== tobaccoId) {
+          return row
+        }
+        const next = { ...row, [field]: value }
+        if (field === 'net') {
+          next.netManual = value.trim() !== ''
+        } else if (!next.netManual) {
+          const tare = Number(field === 'tare' ? value : next.tare)
+          const gross = Number(field === 'gross' ? value : next.gross)
+          next.net = next.tare !== '' && next.gross !== '' && !Number.isNaN(tare) && !Number.isNaN(gross)
+            ? (gross - tare).toString()
+            : ''
+        }
+        return next
+      }),
+    )
+  }
+
+  const saveInventoryRow = async (tobaccoId: number) => {
+    const row = inventoryRows.find((item) => item.tobaccoId === tobaccoId)
+    if (!row) {
+      return
+    }
+
+    if (row.net.trim() === '' && (row.tare.trim() === '' || row.gross.trim() === '')) {
+      setNotice('Укажите вес без тары или пару «вес тары + вес с тарой»')
+      setNoticeTone('error')
+      return
+    }
+
+    setInventoryRows((current) => current.map((item) => (item.tobaccoId === tobaccoId ? { ...item, busy: true } : item)))
+
+    try {
+      await authorizedFetch(`/api/v1/admin/tobacco/${tobaccoId}/inventory`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          tare_weight: row.tare.trim() !== '' ? Number(row.tare) : null,
+          gross_weight: row.gross.trim() !== '' ? Number(row.gross) : null,
+          net_weight: row.net.trim() !== '' ? Number(row.net) : null,
+        }),
+      })
+      await loadTobacco()
+      setInventoryRows((current) => current.filter((item) => item.tobaccoId !== tobaccoId))
+      setNotice(`Остаток «${row.brand} — ${row.flavorName}» обновлён`)
+      setNoticeTone('neutral')
+    } catch (error) {
+      setInventoryRows((current) => current.map((item) => (item.tobaccoId === tobaccoId ? { ...item, busy: false } : item)))
+      setNotice(error instanceof Error ? error.message : 'Не удалось сохранить остаток')
+      setNoticeTone('error')
     }
   }
 
@@ -1314,7 +1436,7 @@ function AppShell() {
             </div>
 
             <div className="admin-tabs">
-              {([['companies', 'Компании'], ['guests', 'Гости'], ['tobacco', 'Каталог табака'], ['orders', 'Заказы'], ['pricing', 'Параметры']] as const).map(([value, label]) => (
+              {([['companies', 'Компании'], ['guests', 'Гости'], ['tobacco', 'Каталог табака'], ['inventory', 'Инвентаризация'], ['stock', 'Остатки'], ['orders', 'Заказы'], ['pricing', 'Параметры']] as const).map(([value, label]) => (
                 <button key={value} type="button" className={adminTab === value ? 'tab-button tab-button-active' : 'tab-button'} onClick={() => setAdminTab(value)}>{label}</button>
               ))}
             </div>
@@ -1336,8 +1458,32 @@ function AppShell() {
 
               {adminTab === 'tobacco' ? (
                 <div className="admin-card list-card">
-                  <div className="card-header"><div className="header-inline-actions"><h3>Каталог табака</h3><button type="button" className="inline-create-button" onClick={openCreateTobacco}>+ Новая позиция каталога</button></div><div className="header-search-slot"><input className="compact-input compact-input-narrow" placeholder="Поиск по бренду или аромату" value={tobaccoQuery} onChange={async (event) => { const value = event.target.value; setTobaccoQuery(value); if (adminUser) { try { await loadTobacco(value) } catch {} } }} /></div></div>
-                  <div className="stack-list stack-list-tight">{tobaccoCatalog.map((item) => <article key={item.id} className="list-item"><strong>{item.brand}</strong><p>{item.flavor_name}</p>{item.description ? <p className="tobacco-description">{item.description}</p> : null}<span className="pill-inline">{item.strength}</span></article>)}</div>
+                  <div className="card-header"><div className="header-inline-actions"><h3>Каталог табака</h3><button type="button" className="inline-create-button" onClick={openCreateTobacco}>+ Новая позиция каталога</button></div><div className="header-search-slot"><input className="compact-input compact-input-narrow" placeholder="Поиск по бренду или аромату" value={tobaccoQuery} onChange={(event) => setTobaccoQuery(event.target.value)} /></div></div>
+                  <div className="stack-list">{filteredTobacco.map((item) => <article key={item.id} className="list-item tobacco-card"><div className="tobacco-head"><strong>{item.brand} — {item.flavor_name}</strong><span className="pill-inline">{item.strength}</span></div>{item.description ? <p className="tobacco-description">{item.description}</p> : null}</article>)}</div>
+                </div>
+              ) : null}
+
+              {adminTab === 'inventory' ? (
+                <div className="admin-card list-card">
+                  <div className="card-header"><div><h3>Инвентаризация</h3><p className="summary-hint">Найдите позицию, впишите вес тары и вес с тарой — чистый остаток посчитается сам. Либо укажите вес без тары напрямую.</p></div></div>
+                  <div className="header-search-slot inventory-search"><input className="compact-input" placeholder="Поиск позиции по бренду или аромату" value={inventoryQuery} onChange={(event) => setInventoryQuery(event.target.value)} /></div>
+                  {inventorySearchResults.length > 0 ? <div className="company-search-results">{inventorySearchResults.map((item) => <button key={item.id} type="button" className="company-result" onClick={() => addInventoryRow(item)}><strong>{item.brand} — {item.flavor_name}</strong><span className="company-result-separator">•</span><span>{item.strength}</span></button>)}</div> : null}
+                  {inventoryRows.length > 0 ? (
+                    <div className="inventory-table">
+                      <div className="inventory-row inventory-head"><span>Позиция</span><span>Вес тары</span><span>Вес с тарой</span><span>Чистый остаток</span><span></span></div>
+                      {inventoryRows.map((row) => <div key={row.tobaccoId} className="inventory-row"><span className="inventory-name"><strong>{row.brand} — {row.flavorName}</strong><small>{row.strength}</small></span><input type="number" min="0" step="0.1" inputMode="decimal" placeholder="г" value={row.tare} onChange={(event) => updateInventoryRow(row.tobaccoId, 'tare', event.target.value)} /><input type="number" min="0" step="0.1" inputMode="decimal" placeholder="г" value={row.gross} onChange={(event) => updateInventoryRow(row.tobaccoId, 'gross', event.target.value)} /><input type="number" min="0" step="0.1" inputMode="decimal" placeholder="г" value={row.net} onChange={(event) => updateInventoryRow(row.tobaccoId, 'net', event.target.value)} /><div className="inventory-actions"><button type="button" className="primary-button" disabled={row.busy} onClick={() => saveInventoryRow(row.tobaccoId)}>{row.busy ? '...' : 'Сохранить'}</button><button type="button" className="icon-button" aria-label="Убрать из списка" onClick={() => removeInventoryRow(row.tobaccoId)}>×</button></div></div>)}
+                    </div>
+                  ) : <p className="summary-hint">Пока ничего не добавлено. Найдите позицию через поиск выше.</p>}
+                </div>
+              ) : null}
+
+              {adminTab === 'stock' ? (
+                <div className="admin-card list-card">
+                  <div className="card-header"><div><h3>Остатки</h3><p className="summary-hint">Текущий чистый остаток по всему каталогу. Всего позиций: {filteredStock.length}.</p></div><div className="stock-filters"><select value={stockBrand} onChange={(event) => setStockBrand(event.target.value)}><option value="">Все бренды</option>{tobaccoBrands.map((brand) => <option key={brand} value={brand}>{brand}</option>)}</select><select value={stockStrength} onChange={(event) => setStockStrength(event.target.value)}><option value="">Все сегменты</option>{tobaccoStrengths.map((strength) => <option key={strength} value={strength}>{strength}</option>)}</select></div></div>
+                  <div className="stock-table">
+                    <div className="stock-row stock-head"><span>Бренд</span><span>Наименование</span><span>Сегмент</span><span>Чистый остаток</span></div>
+                    {filteredStock.map((item) => <div key={item.id} className="stock-row"><span>{item.brand}</span><span>{item.flavor_name}</span><span>{item.strength}</span><span className={item.net_weight != null ? 'stock-value' : 'stock-empty'}>{item.net_weight != null ? `${formatNumber(item.net_weight)} г` : '—'}</span></div>)}
+                  </div>
                 </div>
               ) : null}
 

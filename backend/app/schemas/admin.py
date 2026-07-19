@@ -61,6 +61,16 @@ class TobaccoRead(TobaccoCreate):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    tare_weight: Optional[float] = None
+    gross_weight: Optional[float] = None
+    net_weight: Optional[float] = None
+    stock_updated_at: Optional[datetime] = None
+
+
+class TobaccoInventoryUpdate(BaseModel):
+    tare_weight: Optional[float] = Field(default=None, ge=0)
+    gross_weight: Optional[float] = Field(default=None, ge=0)
+    net_weight: Optional[float] = Field(default=None, ge=0)
 
 
 class GuestPreferenceItemPayload(BaseModel):
