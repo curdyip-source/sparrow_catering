@@ -1,1 +1,2 @@
 .volume/** filter=git-crypt diff=git-crypt
+.docs/** filter=git-crypt diff=git-crypt
