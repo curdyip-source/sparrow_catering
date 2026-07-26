@@ -14,7 +14,18 @@ class Settings(BaseSettings):
     first_admin_pass: str = ""
     admin_token_secret: str = "sparrow-admin-token-secret"
     admin_token_ttl_hours: int = 12
-    cors_origins: list[str] = ["http://localhost:5173"]
+    frontend_port: int = 5173
+    # Пусто = разрешаем localhost на FRONTEND_PORT. Явный список из env переопределяет.
+    cors_origins: list[str] = []
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        if self.cors_origins:
+            return self.cors_origins
+        return [
+            f"http://localhost:{self.frontend_port}",
+            f"http://127.0.0.1:{self.frontend_port}",
+        ]
 
 
 @lru_cache

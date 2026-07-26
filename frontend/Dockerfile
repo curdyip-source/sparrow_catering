@@ -7,4 +7,4 @@ RUN npm ci
 
 COPY . ./
 
-EXPOSE 5173
+# Порт задаётся через FRONTEND_PORT в .env (см. scripts/ports.sh)

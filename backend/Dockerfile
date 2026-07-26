@@ -13,4 +13,4 @@ COPY alembic ./alembic
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -e .
 
-EXPOSE 8000
+# Порт задаётся через BACKEND_PORT в .env (см. scripts/ports.sh)

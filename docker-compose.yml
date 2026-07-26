@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -55,7 +55,7 @@ services:
     image: redis:7-alpine
     container_name: ${PROJECT_NAME}-redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT}:6379"
 
   backend:
     build:
@@ -63,6 +63,8 @@ services:
     container_name: ${PROJECT_NAME}-backend
     env_file:
       - .env
+    environment:
+      FRONTEND_PORT: ${FRONTEND_PORT}
     command: sh -c "python -m app.db.wait_for_db && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT}"
     volumes:
       - ./backend:/app
@@ -99,7 +101,10 @@ services:
     container_name: ${PROJECT_NAME}-frontend
     env_file:
       - .env
-    command: npm run dev -- --host 0.0.0.0 --port ${FRONTEND_PORT}
+    environment:
+      # выводим из BACKEND_PORT, чтобы при смене блока не править вручную
+      VITE_API_BASE_URL: http://localhost:${BACKEND_PORT}
+    command: npm run dev -- --host 0.0.0.0 --port ${FRONTEND_PORT} --strictPort
     volumes:
       - ./frontend:/app
       - /app/node_modules
