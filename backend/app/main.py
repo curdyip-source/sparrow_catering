@@ -9,7 +9,7 @@ from app.api.router import api_router
 from app.core.settings import get_settings
 from app.db.base import Base
 from app.db.session import engine
-from app.models import company, guest, lead, order, pricing_config, tobacco, user  # noqa: F401
+from app.models import company, guest, lead, order, pricing_config, stock, tobacco, user  # noqa: F401
 
 settings = get_settings()
 

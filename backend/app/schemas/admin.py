@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.guest import BowlType
 from app.models.order import OrderStatus
+from app.models.stock import InventoryStatus, StockMovementKind
 
 
 class AdminLoginRequest(BaseModel):
@@ -55,22 +56,145 @@ class TobaccoCreate(BaseModel):
     brand: str = Field(min_length=1, max_length=120)
     flavor_name: str = Field(min_length=1, max_length=120)
     description: Optional[str] = Field(default=None, max_length=500)
+    cost_per_gram: Optional[float] = Field(default=None, ge=0)
 
 
 class TobaccoRead(TobaccoCreate):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    tare_weight: Optional[float] = None
-    gross_weight: Optional[float] = None
-    net_weight: Optional[float] = None
-    stock_updated_at: Optional[datetime] = None
 
 
-class TobaccoInventoryUpdate(BaseModel):
+class TobaccoUpdate(BaseModel):
+    strength: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    brand: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    flavor_name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=500)
+    cost_per_gram: Optional[float] = Field(default=None, ge=0)
+
+
+# ── Склад: остатки и движения ──────────────────────────────────────
+
+class StockBalanceRead(BaseModel):
+    tobacco_id: int
+    brand: str
+    flavor_name: str
+    strength: str
+    cost_per_gram: Optional[float] = None
+    balance_grams: float
+    stock_value: Optional[float] = None  # balance_grams × cost_per_gram
+
+
+class StockMovementCreate(BaseModel):
+    tobacco_id: int
+    grams: float = Field(gt=0)  # всегда положительное, знак задаёт тип операции
+    cost_per_gram: Optional[float] = Field(default=None, ge=0)
+    comment: Optional[str] = Field(default=None, max_length=2000)
+
+
+class StockMovementRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    tobacco_id: int
+    kind: StockMovementKind
+    delta_grams: float
+    cost_per_gram: Optional[float] = None
+    inventory_session_id: Optional[int] = None
+    comment: Optional[str] = None
+    created_at: datetime
+
+
+# ── Инвентаризация ─────────────────────────────────────────────────
+
+class InventorySessionCreate(BaseModel):
+    comment: Optional[str] = Field(default=None, max_length=2000)
+
+
+class InventoryLineAdd(BaseModel):
+    tobacco_id: int
+
+
+class InventoryLineUpdate(BaseModel):
+    counted_grams: Optional[float] = Field(default=None, ge=0)
     tare_weight: Optional[float] = Field(default=None, ge=0)
     gross_weight: Optional[float] = Field(default=None, ge=0)
-    net_weight: Optional[float] = Field(default=None, ge=0)
+
+
+class InventoryLineBulkItem(BaseModel):
+    line_id: int
+    counted_grams: Optional[float] = Field(default=None, ge=0)
+    tare_weight: Optional[float] = Field(default=None, ge=0)
+    gross_weight: Optional[float] = Field(default=None, ge=0)
+
+
+class InventoryLineBulkSave(BaseModel):
+    lines: list[InventoryLineBulkItem]
+
+
+class InventoryLineRead(BaseModel):
+    id: int
+    tobacco_id: int
+    brand: str
+    flavor_name: str
+    strength: str
+    expected_grams: float
+    counted_grams: Optional[float] = None
+    tare_weight: Optional[float] = None
+    gross_weight: Optional[float] = None
+    diff_grams: Optional[float] = None  # counted − expected, None если не считали
+
+
+class InventorySessionRead(BaseModel):
+    id: int
+    status: InventoryStatus
+    comment: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    lines_total: int
+    lines_counted: int
+    diff_total: float  # сумма (counted − expected) по посчитанным строкам
+
+
+class StockDocumentLineInput(BaseModel):
+    tobacco_id: int
+    grams: float = Field(gt=0)
+    cost_per_gram: Optional[float] = Field(default=None, ge=0)
+
+
+class StockDocumentCreate(BaseModel):
+    kind: StockMovementKind
+    comment: Optional[str] = Field(default=None, max_length=2000)
+    lines: list[StockDocumentLineInput] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_kind(self) -> "StockDocumentCreate":
+        if self.kind not in (StockMovementKind.receipt, StockMovementKind.writeoff):
+            raise ValueError("Документ может быть только оприходованием или списанием")
+        return self
+
+
+class StockDocumentLineRead(BaseModel):
+    tobacco_id: int
+    brand: str
+    flavor_name: str
+    strength: str
+    grams: float  # абсолютная величина
+    cost_per_gram: Optional[float] = None
+
+
+class StockDocumentRead(BaseModel):
+    id: int
+    kind: StockMovementKind
+    inventory_session_id: Optional[int] = None
+    comment: Optional[str] = None
+    created_at: datetime
+    lines: list[StockDocumentLineRead]
+
+
+class InventorySessionDetail(InventorySessionRead):
+    lines: list[InventoryLineRead]
+    documents: list[StockDocumentRead]
 
 
 class GuestPreferenceItemPayload(BaseModel):

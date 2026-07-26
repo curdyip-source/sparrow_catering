@@ -77,22 +77,83 @@ type TobaccoItem = {
   brand: string
   flavor_name: string
   description?: string | null
-  tare_weight?: number | null
-  gross_weight?: number | null
-  net_weight?: number | null
-  stock_updated_at?: string | null
+  cost_per_gram?: number | null
 }
 
-type InventoryRow = {
-  tobaccoId: number
+type StockBalance = {
+  tobacco_id: number
   brand: string
-  flavorName: string
+  flavor_name: string
   strength: string
+  cost_per_gram?: number | null
+  balance_grams: number
+  stock_value?: number | null
+}
+
+type InventoryLine = {
+  id: number
+  tobacco_id: number
+  brand: string
+  flavor_name: string
+  strength: string
+  expected_grams: number
+  counted_grams?: number | null
+  tare_weight?: number | null
+  gross_weight?: number | null
+  diff_grams?: number | null
+}
+
+type InventorySession = {
+  id: number
+  status: 'draft' | 'completed'
+  comment?: string | null
+  created_at: string
+  completed_at?: string | null
+  lines_total: number
+  lines_counted: number
+  diff_total: number
+}
+
+type StockDocumentLine = {
+  tobacco_id: number
+  brand: string
+  flavor_name: string
+  strength: string
+  grams: number
+  cost_per_gram?: number | null
+}
+
+type StockDocument = {
+  id: number
+  kind: 'receipt' | 'writeoff' | 'inventory'
+  inventory_session_id?: number | null
+  comment?: string | null
+  created_at: string
+  lines: StockDocumentLine[]
+}
+
+type InventorySessionDetail = InventorySession & {
+  lines: InventoryLine[]
+  documents: StockDocument[]
+}
+
+// Два способа задать факт: 'net' — вес без тары одним числом; 'gross' — вес тары
+// и вес с тарой, нетто = с тарой − тара.
+type InventoryLineDraft = {
+  mode: 'net' | 'gross'
+  net: string
   tare: string
   gross: string
-  net: string
-  netManual: boolean
   busy: boolean
+}
+
+// Черновик документа (оприходование/списание), собираемый из инвентаризации.
+type DocKind = 'receipt' | 'writeoff'
+type DocLineDraft = {
+  tobaccoId: number
+  label: string
+  grams: string
+  cost: string
 }
 
 type GuestPreferenceItem = {
@@ -425,7 +486,7 @@ function AppShell() {
   const [notice, setNotice] = useState('')
   const [noticeTone, setNoticeTone] = useState<'neutral' | 'error'>('neutral')
   const [adminPanelOpen, setAdminPanelOpen] = useState(false)
-  const [adminTab, setAdminTab] = useState<'companies' | 'guests' | 'tobacco' | 'inventory' | 'stock' | 'orders' | 'pricing'>('companies')
+  const [adminTab, setAdminTab] = useState<'companies' | 'guests' | 'tobacco' | 'inventory' | 'receipts' | 'writeoffs' | 'stock' | 'orders' | 'pricing'>('companies')
   const [editorOverlay, setEditorOverlay] = useState<null | 'company' | 'guest' | 'tobacco'>(null)
   const [companies, setCompanies] = useState<Company[]>([])
   const [companyQuery, setCompanyQuery] = useState('')
@@ -436,10 +497,24 @@ function AppShell() {
   const [tobaccoQuery, setTobaccoQuery] = useState('')
   const [tobaccoForm, setTobaccoForm] = useState(initialTobaccoForm)
   const [tobaccoBusy, setTobaccoBusy] = useState(false)
-  const [inventoryQuery, setInventoryQuery] = useState('')
-  const [inventoryRows, setInventoryRows] = useState<InventoryRow[]>([])
   const [stockBrand, setStockBrand] = useState('')
   const [stockStrength, setStockStrength] = useState('')
+  const [stockRows, setStockRows] = useState<StockBalance[]>([])
+  const [inventories, setInventories] = useState<InventorySession[]>([])
+  const [activeInventory, setActiveInventory] = useState<InventorySessionDetail | null>(null)
+  const [inventoryBusy, setInventoryBusy] = useState(false)
+  const [lineDrafts, setLineDrafts] = useState<Record<number, InventoryLineDraft>>({})
+  const [tareAll, setTareAll] = useState('')
+  const [sessionQuery, setSessionQuery] = useState('')
+  // Единый редактор документа: и standalone (из раздела Документы), и из инвента.
+  const [stockDocuments, setStockDocuments] = useState<StockDocument[]>([])
+  const [saKind, setSaKind] = useState<DocKind | null>(null)
+  const [saLines, setSaLines] = useState<DocLineDraft[]>([])
+  const [saQuery, setSaQuery] = useState('')
+  const [saBusy, setSaBusy] = useState(false)
+  // Если документ открыт из инвентаризации — её id (для привязки и возврата).
+  const [saSessionId, setSaSessionId] = useState<number | null>(null)
+  const [lastWarehouse, setLastWarehouse] = useState<'inventory' | 'receipts' | 'writeoffs' | 'stock'>('inventory')
   const [guests, setGuests] = useState<Guest[]>([])
   const [guestQuery, setGuestQuery] = useState('')
   const [guestForm, setGuestForm] = useState(initialGuestForm)
@@ -545,6 +620,27 @@ function AppShell() {
     return payload
   }
 
+  const loadStock = async () => {
+    const response = await authorizedFetch('/api/v1/admin/stock')
+    const payload = (await response.json()) as StockBalance[]
+    setStockRows(payload)
+    return payload
+  }
+
+  const loadInventories = async () => {
+    const response = await authorizedFetch('/api/v1/admin/inventories')
+    const payload = (await response.json()) as InventorySession[]
+    setInventories(payload)
+    return payload
+  }
+
+  const loadStockDocuments = async () => {
+    const response = await authorizedFetch('/api/v1/admin/stock/documents')
+    const payload = (await response.json()) as StockDocument[]
+    setStockDocuments(payload)
+    return payload
+  }
+
   const loadGuests = async () => {
     const response = await authorizedFetch('/api/v1/admin/guests')
     setGuests((await response.json()) as Guest[])
@@ -602,7 +698,7 @@ function AppShell() {
 
     const loadAdminData = async () => {
       try {
-        await Promise.all([loadCompanies(companyQuery), loadTobacco(), loadGuests(), loadOrders()])
+        await Promise.all([loadCompanies(companyQuery), loadTobacco(), loadStock(), loadInventories(), loadStockDocuments(), loadGuests(), loadOrders()])
       } catch (error) {
         setNotice(error instanceof Error ? error.message : 'Не удалось загрузить админские данные')
         setNoticeTone('error')
@@ -674,17 +770,24 @@ function AppShell() {
     ? tobaccoCatalog.filter((item) => matchesTobacco(item, normalizedTobaccoQuery))
     : tobaccoCatalog
 
-  const normalizedInventoryQuery = inventoryQuery.trim().toLowerCase()
-  const inventoryRowIds = new Set(inventoryRows.map((row) => row.tobaccoId))
-  const inventorySearchResults = normalizedInventoryQuery
-    ? tobaccoCatalog.filter((item) => !inventoryRowIds.has(item.id) && matchesTobacco(item, normalizedInventoryQuery)).slice(0, 12)
-    : []
-
   const tobaccoBrands = Array.from(new Set(tobaccoCatalog.map((item) => item.brand))).sort((a, b) => a.localeCompare(b, 'ru'))
   const tobaccoStrengths = Array.from(new Set(tobaccoCatalog.map((item) => item.strength))).sort((a, b) => a.localeCompare(b, 'ru'))
-  const filteredStock = tobaccoCatalog.filter(
+  const filteredStock = stockRows.filter(
     (item) => (!stockBrand || item.brand === stockBrand) && (!stockStrength || item.strength === stockStrength),
   )
+  const stockValueTotal = filteredStock.reduce((sum, item) => sum + (item.stock_value ?? 0), 0)
+
+  const sessionLineIds = new Set(activeInventory?.lines.map((line) => line.tobacco_id) ?? [])
+  const normalizedSessionQuery = sessionQuery.trim().toLowerCase()
+  const sessionSearchResults = normalizedSessionQuery
+    ? tobaccoCatalog.filter((item) => !sessionLineIds.has(item.id) && matchesTobacco(item, normalizedSessionQuery)).slice(0, 12)
+    : []
+
+  const saLineIds = new Set(saLines.map((line) => line.tobaccoId))
+  const normalizedSaQuery = saQuery.trim().toLowerCase()
+  const saSearchResults = normalizedSaQuery
+    ? tobaccoCatalog.filter((item) => !saLineIds.has(item.id) && matchesTobacco(item, normalizedSaQuery)).slice(0, 12)
+    : []
 
   const resetCompanyForm = () => {
     setCompanyForm(initialCompanyForm)
@@ -968,7 +1071,12 @@ function AppShell() {
     try {
       await authorizedFetch('/api/v1/admin/tobacco', {
         method: 'POST',
-        body: JSON.stringify({ strength: tobaccoForm.strength, brand: tobaccoForm.brand, flavor_name: tobaccoForm.flavorName, description: tobaccoForm.description || null }),
+        body: JSON.stringify({
+          strength: tobaccoForm.strength,
+          brand: tobaccoForm.brand,
+          flavor_name: tobaccoForm.flavorName,
+          description: tobaccoForm.description || null,
+        }),
       })
       resetTobaccoForm()
       setEditorOverlay(null)
@@ -983,82 +1091,417 @@ function AppShell() {
     }
   }
 
-  const addInventoryRow = (item: TobaccoItem) => {
-    setInventoryRows((current) => {
-      if (current.some((row) => row.tobaccoId === item.id)) {
-        return current
+  // ── Инвентаризация ───────────────────────────────────────────────
+  const seedFromLine = (line: InventoryLine): InventoryLineDraft => ({
+    mode: line.tare_weight != null || line.gross_weight != null ? 'gross' : 'net',
+    net: line.counted_grams != null ? line.counted_grams.toString() : '',
+    tare: line.tare_weight != null ? line.tare_weight.toString() : '',
+    gross: line.gross_weight != null ? line.gross_weight.toString() : '',
+    busy: false,
+  })
+
+  // Факт из черновика: в режиме нетто — само число; в режиме тары — с тарой − тара.
+  const draftCounted = (draft: InventoryLineDraft | undefined): number | null => {
+    if (!draft) {
+      return null
+    }
+    if (draft.mode === 'net') {
+      const value = Number(draft.net)
+      return draft.net.trim() !== '' && !Number.isNaN(value) ? value : null
+    }
+    const tare = Number(draft.tare)
+    const gross = Number(draft.gross)
+    if (draft.tare.trim() === '' || draft.gross.trim() === '' || Number.isNaN(tare) || Number.isNaN(gross)) {
+      return null
+    }
+    return Math.max(gross - tare, 0)
+  }
+
+  // reset=true — заново (при открытии сессии); иначе мёрдж: сохраняем правки уже
+  // существующих строк, добавляем черновики новым и убираем удалённые.
+  const seedLineDrafts = (session: InventorySessionDetail, reset = false) => {
+    setLineDrafts((current) => {
+      const ids = new Set(session.lines.map((line) => line.id))
+      const next: Record<number, InventoryLineDraft> = reset ? {} : { ...current }
+      for (const id of Object.keys(next).map(Number)) {
+        if (!ids.has(id)) {
+          delete next[id]
+        }
       }
-      const nextRow: InventoryRow = {
-        tobaccoId: item.id,
-        brand: item.brand,
-        flavorName: item.flavor_name,
-        strength: item.strength,
-        tare: item.tare_weight != null ? item.tare_weight.toString() : '',
-        gross: item.gross_weight != null ? item.gross_weight.toString() : '',
-        net: item.net_weight != null ? item.net_weight.toString() : '',
-        netManual: item.net_weight != null,
-        busy: false,
+      for (const line of session.lines) {
+        if (!next[line.id]) {
+          next[line.id] = seedFromLine(line)
+        }
       }
-      return [...current, nextRow]
+      return next
     })
-    setInventoryQuery('')
   }
 
-  const removeInventoryRow = (tobaccoId: number) => {
-    setInventoryRows((current) => current.filter((row) => row.tobaccoId !== tobaccoId))
+  const openInventory = async (sessionId: number) => {
+    setInventoryBusy(true)
+    try {
+      const response = await authorizedFetch(`/api/v1/admin/inventories/${sessionId}`)
+      const detail = (await response.json()) as InventorySessionDetail
+      setActiveInventory(detail)
+      seedLineDrafts(detail, true)
+      closeStandaloneDoc()
+      setSessionQuery('')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось открыть инвентаризацию')
+      setNoticeTone('error')
+    } finally {
+      setInventoryBusy(false)
+    }
   }
 
-  const updateInventoryRow = (tobaccoId: number, field: 'tare' | 'gross' | 'net', value: string) => {
-    setInventoryRows((current) =>
-      current.map((row) => {
-        if (row.tobaccoId !== tobaccoId) {
-          return row
-        }
-        const next = { ...row, [field]: value }
-        if (field === 'net') {
-          next.netManual = value.trim() !== ''
-        } else if (!next.netManual) {
-          const tare = Number(field === 'tare' ? value : next.tare)
-          const gross = Number(field === 'gross' ? value : next.gross)
-          next.net = next.tare !== '' && next.gross !== '' && !Number.isNaN(tare) && !Number.isNaN(gross)
-            ? (gross - tare).toString()
-            : ''
-        }
-        return next
-      }),
+  const startInventory = async () => {
+    setInventoryBusy(true)
+    try {
+      const response = await authorizedFetch('/api/v1/admin/inventories', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      })
+      const detail = (await response.json()) as InventorySessionDetail
+      setActiveInventory(detail)
+      seedLineDrafts(detail, true)
+      closeStandaloneDoc()
+      setSessionQuery('')
+      await loadInventories()
+      setNotice(`Инвентаризация #${detail.id} начата`)
+      setNoticeTone('neutral')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось начать инвентаризацию')
+      setNoticeTone('error')
+    } finally {
+      setInventoryBusy(false)
+    }
+  }
+
+  const addInventoryPosition = async (tobaccoId: number) => {
+    if (!activeInventory) {
+      return
+    }
+    try {
+      const response = await authorizedFetch(`/api/v1/admin/inventories/${activeInventory.id}/lines`, {
+        method: 'POST',
+        body: JSON.stringify({ tobacco_id: tobaccoId }),
+      })
+      const detail = (await response.json()) as InventorySessionDetail
+      setActiveInventory(detail)
+      seedLineDrafts(detail)
+      setSessionQuery('')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось добавить позицию')
+      setNoticeTone('error')
+    }
+  }
+
+  const removeInventoryLine = async (lineId: number) => {
+    if (!activeInventory) {
+      return
+    }
+    try {
+      const response = await authorizedFetch(`/api/v1/admin/inventories/${activeInventory.id}/lines/${lineId}`, {
+        method: 'DELETE',
+      })
+      const detail = (await response.json()) as InventorySessionDetail
+      setActiveInventory(detail)
+      seedLineDrafts(detail)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось убрать позицию')
+      setNoticeTone('error')
+    }
+  }
+
+  const DEFAULT_DRAFT: InventoryLineDraft = { mode: 'net', net: '', tare: '', gross: '', busy: false }
+
+  const setLineMode = (lineId: number, mode: 'net' | 'gross') => {
+    setLineDrafts((current) => ({ ...current, [lineId]: { ...(current[lineId] ?? DEFAULT_DRAFT), mode } }))
+  }
+
+  const updateLineDraft = (lineId: number, field: 'tare' | 'gross' | 'net', value: string) => {
+    setLineDrafts((current) => ({ ...current, [lineId]: { ...(current[lineId] ?? DEFAULT_DRAFT), [field]: value } }))
+  }
+
+  // Одна тара на все строки: проставляем тару и переводим строки в режим «с тарой».
+  const applyTareToAll = () => {
+    if (!activeInventory) {
+      return
+    }
+    setLineDrafts((current) => {
+      const next = { ...current }
+      for (const line of activeInventory.lines) {
+        const row = next[line.id] ?? DEFAULT_DRAFT
+        next[line.id] = { ...row, tare: tareAll, mode: 'gross' }
+      }
+      return next
+    })
+  }
+
+  // Сохранить весь пересчёт разом (без построчных галочек). Возвращает свежий detail.
+  const persistInventory = async (): Promise<InventorySessionDetail | null> => {
+    if (!activeInventory) {
+      return null
+    }
+    const lines = activeInventory.lines.map((line) => {
+      const draft = lineDrafts[line.id] ?? DEFAULT_DRAFT
+      const counted = draftCounted(draft)
+      return {
+        line_id: line.id,
+        counted_grams: counted,
+        tare_weight: draft.mode === 'gross' && draft.tare.trim() !== '' ? Number(draft.tare) : null,
+        gross_weight: draft.mode === 'gross' && draft.gross.trim() !== '' ? Number(draft.gross) : null,
+      }
+    })
+    const response = await authorizedFetch(`/api/v1/admin/inventories/${activeInventory.id}/save`, {
+      method: 'POST',
+      body: JSON.stringify({ lines }),
+    })
+    const detail = (await response.json()) as InventorySessionDetail
+    setActiveInventory(detail)
+    seedLineDrafts(detail)
+    return detail
+  }
+
+  const saveInventory = async () => {
+    setInventoryBusy(true)
+    try {
+      await persistInventory()
+      setNotice('Пересчёт сохранён')
+      setNoticeTone('neutral')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось сохранить пересчёт')
+      setNoticeTone('error')
+    } finally {
+      setInventoryBusy(false)
+    }
+  }
+
+  // Из инвентаризации: сохраняем пересчёт и открываем полноценную форму документа
+  // (вкладка Списание/Оприходование), предзаполненную свежей разницей.
+  const startDocFromInventory = async (kind: DocKind) => {
+    if (!activeInventory) {
+      return
+    }
+    setInventoryBusy(true)
+    try {
+      const detail = await persistInventory()
+      if (!detail) {
+        return
+      }
+      const documented = new Set(
+        detail.documents.filter((doc) => doc.kind === kind).flatMap((doc) => doc.lines.map((line) => line.tobacco_id)),
+      )
+      const prefilled: DocLineDraft[] = detail.lines
+        .map((line) => {
+          const diff = line.counted_grams != null ? line.counted_grams - line.expected_grams : null
+          const grams = documented.has(line.tobacco_id)
+            ? 0
+            : diff == null
+              ? 0
+              : kind === 'writeoff'
+                ? (diff < 0 ? -diff : 0)
+                : diff > 0
+                  ? diff
+                  : 0
+          return { tobaccoId: line.tobacco_id, label: `${line.brand} — ${line.flavor_name}`, grams: grams > 0 ? grams.toString() : '', cost: '' }
+        })
+        .filter((line) => line.grams !== '')
+      setSaKind(kind)
+      setSaLines(prefilled)
+      setSaQuery('')
+      setSaSessionId(detail.id)
+      setLastWarehouse(kind === 'receipt' ? 'receipts' : 'writeoffs')
+      setAdminTab(kind === 'receipt' ? 'receipts' : 'writeoffs')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось открыть документ')
+      setNoticeTone('error')
+    } finally {
+      setInventoryBusy(false)
+    }
+  }
+
+  // ── Документы: самостоятельные проводки ──────────────────────────
+  const openStandaloneDoc = (kind: DocKind) => {
+    setSaKind(kind)
+    setSaLines([])
+    setSaQuery('')
+    setSaSessionId(null)
+  }
+
+  const closeStandaloneDoc = () => {
+    setSaKind(null)
+    setSaLines([])
+    setSaQuery('')
+    setSaSessionId(null)
+  }
+
+  const cancelDoc = () => {
+    const sessionId = saSessionId
+    closeStandaloneDoc()
+    if (sessionId != null) {
+      setAdminTab('inventory')
+    }
+  }
+
+  const goTab = (tab: typeof adminTab) => {
+    closeStandaloneDoc()
+    if (tab === 'inventory' || tab === 'receipts' || tab === 'writeoffs' || tab === 'stock') {
+      setLastWarehouse(tab)
+    }
+    setAdminTab(tab)
+  }
+
+  // Вкладка «Оприходование»/«Списание»: создание проводки без инвента + список
+  // документов этого типа (в т.ч. рождённых из инвентаризации).
+  const renderDocTab = (kind: DocKind) => {
+    const title = kind === 'receipt' ? 'Оприходование' : 'Списание'
+    const list = stockDocuments.filter((doc) => doc.kind === kind)
+    const editing = saKind === kind
+    return (
+      <div className="admin-card list-card">
+        <div className="card-header"><div className="header-inline-actions"><h3>{title}</h3>{editing ? null : <button type="button" className="inline-create-button" onClick={() => openStandaloneDoc(kind)}>+ Новый документ</button>}</div></div>
+        <p className="summary-hint">{kind === 'receipt' ? 'Приём товара на склад — без инвентаризации или из неё.' : 'Списание со склада — без инвентаризации или из неё.'} Себестоимость {kind === 'receipt' ? 'указывается здесь, при оприходовании.' : 'берётся из последнего оприходования.'}</p>
+
+        {editing ? (
+          <div className="doc-editor">
+            <div className="card-header"><div className="header-inline-actions"><h4>{kind === 'receipt' ? 'Новое оприходование' : 'Новое списание'}</h4>{saSessionId != null ? <span className="pill-inline">из инвентаризации #{saSessionId}</span> : null}</div><div className="header-inline-actions"><button type="button" className="primary-button" disabled={saBusy} onClick={submitStandaloneDoc}>{saBusy ? '...' : 'Создать документ'}</button><button type="button" className="ghost-button" onClick={cancelDoc}>{saSessionId != null ? '← К инвентаризации' : 'Отмена'}</button></div></div>
+            <div className="header-search-slot inventory-search"><input className="compact-input" placeholder="Найдите позицию по бренду или аромату и добавьте" value={saQuery} onChange={(event) => setSaQuery(event.target.value)} /></div>
+            {saSearchResults.length > 0 ? <div className="company-search-results">{saSearchResults.map((item) => <button key={item.id} type="button" className="company-result" onClick={() => addStandaloneLine(item)}><strong>{item.brand} — {item.flavor_name}</strong><span className="company-result-separator">•</span><span>{item.strength}</span></button>)}</div> : null}
+            {saLines.length > 0 ? (
+              <div className="doc-lines">
+                <div className={kind === 'receipt' ? 'doc-line doc-line-removable doc-line-receipt doc-head' : 'doc-line doc-line-removable doc-head'}><span>Позиция</span><span>Граммы</span>{kind === 'receipt' ? <span>₽/г</span> : null}<span></span></div>
+                {saLines.map((line, index) => (
+                  <div key={line.tobaccoId} className={kind === 'receipt' ? 'doc-line doc-line-removable doc-line-receipt' : 'doc-line doc-line-removable'}>
+                    <span className="inventory-name"><strong>{line.label}</strong></span>
+                    <input type="number" min="0" step="0.1" inputMode="decimal" placeholder="г" value={line.grams} onChange={(event) => updateStandaloneLine(index, 'grams', event.target.value)} />
+                    {kind === 'receipt' ? <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="₽/г" value={line.cost} onChange={(event) => updateStandaloneLine(index, 'cost', event.target.value)} /> : null}
+                    <button type="button" className="icon-button" aria-label="Убрать позицию" onClick={() => removeStandaloneLine(index)}>×</button>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="summary-hint">Добавьте позиции через поиск выше.</p>}
+          </div>
+        ) : null}
+
+        {list.length > 0 ? (
+          <div className="doc-history">
+            {list.map((doc) => (
+              <div key={doc.id} className="doc-history-item">
+                <div className="card-header"><div className="header-inline-actions"><span className={doc.kind === 'receipt' ? 'pill-inline' : 'pill-inline pill-inline-warn'}>{title} #{doc.id}</span><small>{formatDateTime(doc.created_at)}</small>{doc.inventory_session_id != null ? <small>· из инвентаризации #{doc.inventory_session_id}</small> : null}</div><button type="button" className="icon-button" aria-label="Удалить документ" onClick={() => deleteDocument(doc.id)}>×</button></div>
+                <div className="doc-history-lines">{doc.lines.map((line) => <span key={line.tobacco_id}>{line.brand} — {line.flavor_name}: {doc.kind === 'receipt' ? '+' : '−'}{formatNumber(line.grams)} г{line.cost_per_gram != null ? ` · ${formatNumber(line.cost_per_gram)} ₽/г` : ''}</span>)}</div>
+              </div>
+            ))}
+          </div>
+        ) : <p className="summary-hint">Документов пока нет.</p>}
+      </div>
     )
   }
 
-  const saveInventoryRow = async (tobaccoId: number) => {
-    const row = inventoryRows.find((item) => item.tobaccoId === tobaccoId)
-    if (!row) {
+  const addStandaloneLine = (item: TobaccoItem) => {
+    setSaLines((current) =>
+      current.some((line) => line.tobaccoId === item.id)
+        ? current
+        : [...current, { tobaccoId: item.id, label: `${item.brand} — ${item.flavor_name}`, grams: '', cost: '' }],
+    )
+    setSaQuery('')
+  }
+
+  const updateStandaloneLine = (index: number, field: 'grams' | 'cost', value: string) => {
+    setSaLines((current) => current.map((line, idx) => (idx === index ? { ...line, [field]: value } : line)))
+  }
+
+  const removeStandaloneLine = (index: number) => {
+    setSaLines((current) => current.filter((_, idx) => idx !== index))
+  }
+
+  const submitStandaloneDoc = async () => {
+    if (!saKind) {
       return
     }
-
-    if (row.net.trim() === '' && (row.tare.trim() === '' || row.gross.trim() === '')) {
-      setNotice('Укажите вес без тары или пару «вес тары + вес с тарой»')
+    const lines = saLines
+      .filter((line) => Number(line.grams) > 0)
+      .map((line) => ({
+        tobacco_id: line.tobaccoId,
+        grams: Number(line.grams),
+        cost_per_gram: saKind === 'receipt' && line.cost.trim() !== '' ? Number(line.cost) : null,
+      }))
+    if (lines.length === 0) {
+      setNotice('Добавьте позиции и укажите положительное количество')
       setNoticeTone('error')
       return
     }
-
-    setInventoryRows((current) => current.map((item) => (item.tobaccoId === tobaccoId ? { ...item, busy: true } : item)))
-
+    const kind = saKind
+    const sessionId = saSessionId
+    setSaBusy(true)
     try {
-      await authorizedFetch(`/api/v1/admin/tobacco/${tobaccoId}/inventory`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          tare_weight: row.tare.trim() !== '' ? Number(row.tare) : null,
-          gross_weight: row.gross.trim() !== '' ? Number(row.gross) : null,
-          net_weight: row.net.trim() !== '' ? Number(row.net) : null,
-        }),
-      })
-      await loadTobacco()
-      setInventoryRows((current) => current.filter((item) => item.tobaccoId !== tobaccoId))
-      setNotice(`Остаток «${row.brand} — ${row.flavorName}» обновлён`)
+      if (sessionId != null) {
+        // Документ из инвентаризации — привязываем и возвращаемся к сессии.
+        const response = await authorizedFetch(`/api/v1/admin/inventories/${sessionId}/documents`, {
+          method: 'POST',
+          body: JSON.stringify({ kind, lines }),
+        })
+        const detail = (await response.json()) as InventorySessionDetail
+        setActiveInventory(detail)
+        seedLineDrafts(detail)
+        await Promise.all([loadStockDocuments(), loadStock(), loadInventories()])
+        closeStandaloneDoc()
+        setAdminTab('inventory')
+      } else {
+        await authorizedFetch('/api/v1/admin/stock/documents', {
+          method: 'POST',
+          body: JSON.stringify({ kind, lines }),
+        })
+        await Promise.all([loadStockDocuments(), loadStock()])
+        closeStandaloneDoc()
+      }
+      setNotice(kind === 'receipt' ? 'Оприходование создано' : 'Списание создано')
       setNoticeTone('neutral')
     } catch (error) {
-      setInventoryRows((current) => current.map((item) => (item.tobaccoId === tobaccoId ? { ...item, busy: false } : item)))
-      setNotice(error instanceof Error ? error.message : 'Не удалось сохранить остаток')
+      setNotice(error instanceof Error ? error.message : 'Не удалось создать документ')
+      setNoticeTone('error')
+    } finally {
+      setSaBusy(false)
+    }
+  }
+
+  const removeInventory = async (sessionId: number) => {
+    try {
+      await authorizedFetch(`/api/v1/admin/inventories/${sessionId}`, { method: 'DELETE' })
+      if (activeInventory?.id === sessionId) {
+        setActiveInventory(null)
+      }
+      await loadInventories()
+      setNotice('Инвентаризация удалена')
+      setNoticeTone('neutral')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось удалить инвентаризацию')
+      setNoticeTone('error')
+    }
+  }
+
+  // Перечитать открытую сессию, сохранив введённые (несохранённые) правки строк.
+  const refreshInventory = async () => {
+    if (!activeInventory) {
+      return
+    }
+    const response = await authorizedFetch(`/api/v1/admin/inventories/${activeInventory.id}`)
+    const detail = (await response.json()) as InventorySessionDetail
+    setActiveInventory(detail)
+    seedLineDrafts(detail)
+  }
+
+  const deleteDocument = async (documentId: number) => {
+    try {
+      await authorizedFetch(`/api/v1/admin/stock/documents/${documentId}`, { method: 'DELETE' })
+      await Promise.all([loadStockDocuments(), loadStock(), loadInventories()])
+      if (activeInventory) {
+        await refreshInventory()
+      }
+      setNotice('Документ удалён, остаток восстановлен')
+      setNoticeTone('neutral')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось удалить документ')
       setNoticeTone('error')
     }
   }
@@ -1447,11 +1890,29 @@ function AppShell() {
               </div>
             </div>
 
-            <div className="admin-tabs">
-              {([['companies', 'Компании'], ['guests', 'Гости'], ['tobacco', 'Каталог табака'], ['inventory', 'Инвентаризация'], ['stock', 'Остатки'], ['orders', 'Заказы'], ['pricing', 'Параметры']] as const).map(([value, label]) => (
-                <button key={value} type="button" className={adminTab === value ? 'tab-button tab-button-active' : 'tab-button'} onClick={() => setAdminTab(value)}>{label}</button>
-              ))}
-            </div>
+            {(() => {
+              const warehouseActive = adminTab === 'inventory' || adminTab === 'receipts' || adminTab === 'writeoffs' || adminTab === 'stock'
+              return (
+                <>
+                  <div className="admin-tabs">
+                    {([['companies', 'Компании'], ['guests', 'Гости'], ['tobacco', 'Каталог табака']] as const).map(([value, label]) => (
+                      <button key={value} type="button" className={adminTab === value ? 'tab-button tab-button-active' : 'tab-button'} onClick={() => goTab(value)}>{label}</button>
+                    ))}
+                    <button type="button" className={warehouseActive ? 'tab-button tab-button-active' : 'tab-button'} onClick={() => goTab(lastWarehouse)}>Склад</button>
+                    {([['orders', 'Заказы'], ['pricing', 'Параметры']] as const).map(([value, label]) => (
+                      <button key={value} type="button" className={adminTab === value ? 'tab-button tab-button-active' : 'tab-button'} onClick={() => goTab(value)}>{label}</button>
+                    ))}
+                  </div>
+                  {warehouseActive ? (
+                    <div className="admin-subtabs">
+                      {([['inventory', 'Инвентаризация'], ['receipts', 'Оприходование'], ['writeoffs', 'Списание'], ['stock', 'Остатки']] as const).map(([value, label]) => (
+                        <button key={value} type="button" className={adminTab === value ? 'subtab-button subtab-button-active' : 'subtab-button'} onClick={() => goTab(value)}>{label}</button>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              )
+            })()}
 
             <div className="admin-shell">
               {adminTab === 'companies' ? (
@@ -1477,27 +1938,97 @@ function AppShell() {
 
               {adminTab === 'inventory' ? (
                 <div className="admin-card list-card">
-                  <div className="card-header"><div><h3>Инвентаризация</h3><p className="summary-hint">Найдите позицию, впишите вес тары и вес с тарой — чистый остаток посчитается сам. Либо укажите вес без тары напрямую.</p></div></div>
-                  <div className="header-search-slot inventory-search"><input className="compact-input" placeholder="Поиск позиции по бренду или аромату" value={inventoryQuery} onChange={(event) => setInventoryQuery(event.target.value)} /></div>
-                  {inventorySearchResults.length > 0 ? <div className="company-search-results">{inventorySearchResults.map((item) => <button key={item.id} type="button" className="company-result" onClick={() => addInventoryRow(item)}><strong>{item.brand} — {item.flavor_name}</strong><span className="company-result-separator">•</span><span>{item.strength}</span></button>)}</div> : null}
-                  {inventoryRows.length > 0 ? (
-                    <div className="inventory-table">
-                      <div className="inventory-row inventory-head"><span>Позиция</span><span>Вес тары</span><span>Вес с тарой</span><span>Чистый остаток</span><span></span></div>
-                      {inventoryRows.map((row) => <div key={row.tobaccoId} className="inventory-row"><span className="inventory-name"><strong>{row.brand} — {row.flavorName}</strong><small>{row.strength}</small></span><input type="number" min="0" step="0.1" inputMode="decimal" placeholder="г" value={row.tare} onChange={(event) => updateInventoryRow(row.tobaccoId, 'tare', event.target.value)} /><input type="number" min="0" step="0.1" inputMode="decimal" placeholder="г" value={row.gross} onChange={(event) => updateInventoryRow(row.tobaccoId, 'gross', event.target.value)} /><input type="number" min="0" step="0.1" inputMode="decimal" placeholder="г" value={row.net} onChange={(event) => updateInventoryRow(row.tobaccoId, 'net', event.target.value)} /><div className="inventory-actions"><button type="button" className="primary-button" disabled={row.busy} onClick={() => saveInventoryRow(row.tobaccoId)}>{row.busy ? '...' : 'Сохранить'}</button><button type="button" className="icon-button" aria-label="Убрать из списка" onClick={() => removeInventoryRow(row.tobaccoId)}>×</button></div></div>)}
-                    </div>
-                  ) : <p className="summary-hint">Пока ничего не добавлено. Найдите позицию через поиск выше.</p>}
+                  {activeInventory ? (
+                    <>
+                      <div className="card-header"><div className="header-inline-actions"><button type="button" className="ghost-button" onClick={() => setActiveInventory(null)}>← К списку</button><h3>Инвентаризация #{activeInventory.id}</h3></div><div className="header-inline-actions">{activeInventory.lines.length > 0 ? <><button type="button" className="primary-button" disabled={inventoryBusy} onClick={saveInventory}>{inventoryBusy ? '...' : 'Сохранить'}</button><button type="button" className="ghost-button" disabled={inventoryBusy} onClick={() => startDocFromInventory('writeoff')}>Создать списание →</button><button type="button" className="ghost-button" disabled={inventoryBusy} onClick={() => startDocFromInventory('receipt')}>Создать оприходование →</button></> : null}</div></div>
+                      <p className="summary-hint">Впишите фактический вес — нетто либо тару и вес с тарой. Разница = факт − учётный остаток. «Создать списание/оприходование» сохранит пересчёт и откроет документ с уже подставленной разницей.</p>
+                      <div className="header-search-slot inventory-search"><input className="compact-input" placeholder="Найдите позицию по бренду или аромату и добавьте в инвентаризацию" value={sessionQuery} onChange={(event) => setSessionQuery(event.target.value)} /></div>
+                      {sessionSearchResults.length > 0 ? <div className="company-search-results">{sessionSearchResults.map((item) => <button key={item.id} type="button" className="company-result" onClick={() => addInventoryPosition(item.id)}><strong>{item.brand} — {item.flavor_name}</strong><span className="company-result-separator">•</span><span>{item.strength}</span></button>)}</div> : null}
+                      {activeInventory.lines.length > 0 ? (
+                        <div className="inventory-tare-all">
+                          <label><span>Вес тары для всех строк</span><input type="number" min="0" step="0.1" inputMode="decimal" placeholder="г" value={tareAll} onChange={(event) => setTareAll(event.target.value)} /></label>
+                          <button type="button" className="ghost-button" onClick={applyTareToAll}>Применить ко всем</button>
+                        </div>
+                      ) : null}
+                      {activeInventory.lines.length > 0 ? (
+                        <div className="inventory-table">
+                          <div className="inventory-row inventory-head"><span>Позиция</span><span>Учётный остаток</span><span>Способ · замер</span><span>Факт</span><span>Разница</span><span></span></div>
+                          {activeInventory.lines.map((line) => {
+                            const draft = lineDrafts[line.id] ?? DEFAULT_DRAFT
+                            const counted = draftCounted(draft)
+                            const diff = counted != null ? counted - line.expected_grams : null
+                            return (
+                              <div key={line.id} className="inventory-row">
+                                <span className="inventory-name"><strong>{line.brand} — {line.flavor_name}</strong><small>{line.strength}</small></span>
+                                <span className="inventory-expected">{formatNumber(line.expected_grams)} г</span>
+                                <div className="inventory-measure">
+                                  <div className="measure-mode">
+                                    <button type="button" className={draft.mode === 'net' ? 'mode-btn mode-btn-active' : 'mode-btn'} onClick={() => setLineMode(line.id, 'net')}>Без тары</button>
+                                    <button type="button" className={draft.mode === 'gross' ? 'mode-btn mode-btn-active' : 'mode-btn'} onClick={() => setLineMode(line.id, 'gross')}>С тарой</button>
+                                  </div>
+                                  {draft.mode === 'net' ? (
+                                    <input type="number" min="0" step="0.1" inputMode="decimal" placeholder="вес нетто, г" value={draft.net} onChange={(event) => updateLineDraft(line.id, 'net', event.target.value)} />
+                                  ) : (
+                                    <div className="measure-pair"><input type="number" min="0" step="0.1" inputMode="decimal" placeholder="вес тары, г" value={draft.tare} onChange={(event) => updateLineDraft(line.id, 'tare', event.target.value)} /><input type="number" min="0" step="0.1" inputMode="decimal" placeholder="вес с тарой, г" value={draft.gross} onChange={(event) => updateLineDraft(line.id, 'gross', event.target.value)} /></div>
+                                  )}
+                                </div>
+                                <span className={counted == null ? 'stock-empty' : 'inventory-expected'}>{counted == null ? '—' : `${formatNumber(counted)} г`}</span>
+                                <span className={diff == null ? 'stock-empty' : diff < 0 ? 'inventory-diff-neg' : diff > 0 ? 'inventory-diff-pos' : ''}>{diff == null ? '—' : `${diff > 0 ? '+' : ''}${formatNumber(diff)} г`}</span>
+                                <div className="inventory-actions"><button type="button" className="icon-button" aria-label="Убрать позицию" onClick={() => removeInventoryLine(line.id)}>×</button></div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ) : <p className="summary-hint">Добавьте позиции через поиск выше.</p>}
+
+                      {activeInventory.documents.length > 0 ? (
+                        <div className="doc-history">
+                          <h4>Созданные документы</h4>
+                          {activeInventory.documents.map((doc) => (
+                            <div key={doc.id} className="doc-history-item">
+                              <div className="card-header"><div className="header-inline-actions"><span className={doc.kind === 'receipt' ? 'pill-inline' : 'pill-inline pill-inline-warn'}>{doc.kind === 'receipt' ? 'Оприходование' : 'Списание'} #{doc.id}</span><small>{formatDateTime(doc.created_at)}</small></div><button type="button" className="icon-button" aria-label="Удалить документ" onClick={() => deleteDocument(doc.id)}>×</button></div>
+                              <div className="doc-history-lines">{doc.lines.map((line) => <span key={line.tobacco_id}>{line.brand} — {line.flavor_name}: {doc.kind === 'receipt' ? '+' : '−'}{formatNumber(line.grams)} г{line.cost_per_gram != null ? ` · ${formatNumber(line.cost_per_gram)} ₽/г` : ''}</span>)}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <div className="card-header"><div className="header-inline-actions"><h3>Инвентаризации</h3><button type="button" className="inline-create-button" disabled={inventoryBusy} onClick={startInventory}>+ Начать инвентаризацию</button></div></div>
+                      <p className="summary-hint">Начните инвентаризацию, добавьте нужные позиции через поиск (по каждой подтянется текущий остаток по базе), введите факт, а из разницы создайте документ списания или оприходования — он корректирует остатки.</p>
+                      {inventories.length > 0 ? (
+                        <div className="stack-list">{inventories.map((session) => (
+                          <article key={session.id} className="list-item inventory-session-card">
+                            <div className="card-header"><div className="header-inline-actions"><strong>Инвентаризация #{session.id}</strong></div><div className="guest-card-actions"><button type="button" className="inline-create-button" onClick={() => openInventory(session.id)}>Открыть</button><button type="button" className="icon-button" aria-label="Удалить инвентаризацию" onClick={() => removeInventory(session.id)}>×</button></div></div>
+                            <div className="guest-card-meta"><p>Создана: {formatDateTime(session.created_at)}</p><p>Позиций: {session.lines_total}</p><p>С фактом: {session.lines_counted}</p><p className={session.diff_total < 0 ? 'inventory-diff-neg' : session.diff_total > 0 ? 'inventory-diff-pos' : ''}>Разница: {session.diff_total > 0 ? '+' : ''}{formatNumber(session.diff_total)} г</p></div>
+                          </article>
+                        ))}</div>
+                      ) : <p className="summary-hint">Инвентаризаций ещё не было. Нажмите «Начать инвентаризацию».</p>}
+                    </>
+                  )}
                 </div>
               ) : null}
 
               {adminTab === 'stock' ? (
                 <div className="admin-card list-card">
-                  <div className="card-header"><div><h3>Остатки</h3><p className="summary-hint">Текущий чистый остаток по всему каталогу. Всего позиций: {filteredStock.length}.</p></div><div className="stock-filters"><select value={stockBrand} onChange={(event) => setStockBrand(event.target.value)}><option value="">Все бренды</option>{tobaccoBrands.map((brand) => <option key={brand} value={brand}>{brand}</option>)}</select><select value={stockStrength} onChange={(event) => setStockStrength(event.target.value)}><option value="">Все сегменты</option>{tobaccoStrengths.map((strength) => <option key={strength} value={strength}>{strength}</option>)}</select></div></div>
+                  <div className="card-header"><div><h3>Остатки</h3><p className="summary-hint">Остаток = сумма движений по журналу. Позиций: {filteredStock.length}. Оценочная стоимость: {formatCurrency(stockValueTotal)}.</p></div><div className="stock-filters"><select value={stockBrand} onChange={(event) => setStockBrand(event.target.value)}><option value="">Все бренды</option>{tobaccoBrands.map((brand) => <option key={brand} value={brand}>{brand}</option>)}</select><select value={stockStrength} onChange={(event) => setStockStrength(event.target.value)}><option value="">Все сегменты</option>{tobaccoStrengths.map((strength) => <option key={strength} value={strength}>{strength}</option>)}</select></div></div>
                   <div className="stock-table">
-                    <div className="stock-row stock-head"><span>Бренд</span><span>Наименование</span><span>Сегмент</span><span>Чистый остаток</span></div>
-                    {filteredStock.map((item) => <div key={item.id} className="stock-row"><span>{item.brand}</span><span>{item.flavor_name}</span><span>{item.strength}</span><span className={item.net_weight != null ? 'stock-value' : 'stock-empty'}>{item.net_weight != null ? `${formatNumber(item.net_weight)} г` : '—'}</span></div>)}
+                    <div className="stock-row stock-head"><span>Позиция</span><span>Остаток</span><span>₽/г</span><span>Стоимость</span></div>
+                    {filteredStock.map((item) => (
+                      <div key={item.tobacco_id} className="stock-row">
+                        <span className="inventory-name"><strong>{item.brand} — {item.flavor_name}</strong><small>{item.strength}</small></span>
+                        <span className="stock-value">{formatNumber(item.balance_grams)} г</span>
+                        <span className={item.cost_per_gram != null ? '' : 'stock-empty'}>{item.cost_per_gram != null ? formatNumber(item.cost_per_gram) : '—'}</span>
+                        <span className={item.stock_value != null ? '' : 'stock-empty'}>{item.stock_value != null ? formatCurrency(item.stock_value) : '—'}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ) : null}
+
+              {adminTab === 'receipts' ? renderDocTab('receipt') : null}
+              {adminTab === 'writeoffs' ? renderDocTab('writeoff') : null}
 
               {adminTab === 'orders' ? (
                 <div className="admin-card list-card">

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.pricing import calculate_quote, ensure_default_pricing, round_quote_total
@@ -12,6 +12,14 @@ from app.db.session import get_db
 from app.models.company import Company
 from app.models.guest import Guest, GuestPreference, GuestPreferenceItem
 from app.models.order import Order, OrderWorkRange
+from app.models.stock import (
+    InventoryLine,
+    InventorySession,
+    InventoryStatus,
+    StockDocument,
+    StockMovement,
+    StockMovementKind,
+)
 from app.models.tobacco import TobaccoCatalog
 from app.models.user import User
 from app.schemas.admin import (
@@ -28,13 +36,26 @@ from app.schemas.admin import (
     GuestRead,
     GuestPreferenceUpdate,
     GuestUpdate,
+    InventoryLineAdd,
+    InventoryLineBulkSave,
+    InventoryLineRead,
+    InventoryLineUpdate,
+    InventorySessionCreate,
+    InventorySessionDetail,
+    InventorySessionRead,
     OrderCreate,
     OrderExpenseUpdate,
     OrderRead,
     OrderWorkRangeRead,
+    StockBalanceRead,
+    StockDocumentCreate,
+    StockDocumentLineRead,
+    StockDocumentRead,
+    StockMovementCreate,
+    StockMovementRead,
     TobaccoCreate,
-    TobaccoInventoryUpdate,
     TobaccoRead,
+    TobaccoUpdate,
 )
 from app.schemas.pricing import PricingConfigRead, PricingConfigUpdate
 
@@ -262,10 +283,10 @@ def create_tobacco(
     return TobaccoRead.model_validate(item)
 
 
-@router.patch("/tobacco/{tobacco_id}/inventory", response_model=TobaccoRead)
-def update_tobacco_inventory(
+@router.patch("/tobacco/{tobacco_id}", response_model=TobaccoRead)
+def update_tobacco(
     tobacco_id: int,
-    payload: TobaccoInventoryUpdate,
+    payload: TobaccoUpdate,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_admin),
 ) -> TobaccoRead:
@@ -273,23 +294,494 @@ def update_tobacco_inventory(
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Позиция каталога не найдена")
 
-    if payload.tare_weight is not None:
-        item.tare_weight = payload.tare_weight
-    if payload.gross_weight is not None:
-        item.gross_weight = payload.gross_weight
-
-    # Чистый остаток: берём явно введённый, иначе считаем как вес с тарой минус вес тары.
-    if payload.net_weight is not None:
-        item.net_weight = payload.net_weight
-    elif item.gross_weight is not None and item.tare_weight is not None:
-        item.net_weight = item.gross_weight - item.tare_weight
-
-    item.stock_updated_at = datetime.now(timezone.utc)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(item, field, value)
 
     db.add(item)
     db.commit()
     db.refresh(item)
     return TobaccoRead.model_validate(item)
+
+
+# ── Склад: остатки и движения ──────────────────────────────────────
+
+def _balances(db: Session) -> dict[int, float]:
+    """Текущий остаток по каждой позиции = SUM(delta_grams) из журнала."""
+    rows = db.execute(
+        select(StockMovement.tobacco_id, func.coalesce(func.sum(StockMovement.delta_grams), 0.0)).group_by(
+            StockMovement.tobacco_id
+        )
+    ).all()
+    return {tobacco_id: float(total) for tobacco_id, total in rows}
+
+
+@router.get("/stock", response_model=list[StockBalanceRead])
+def list_stock(
+    brand: str = Query(default=""),
+    strength: str = Query(default=""),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> list[StockBalanceRead]:
+    statement = select(TobaccoCatalog).order_by(TobaccoCatalog.brand, TobaccoCatalog.flavor_name)
+    if brand:
+        statement = statement.where(TobaccoCatalog.brand == brand)
+    if strength:
+        statement = statement.where(TobaccoCatalog.strength == strength)
+
+    items = db.scalars(statement).all()
+    balances = _balances(db)
+
+    result: list[StockBalanceRead] = []
+    for item in items:
+        balance = balances.get(item.id, 0.0)
+        value = balance * item.cost_per_gram if item.cost_per_gram is not None else None
+        result.append(
+            StockBalanceRead(
+                tobacco_id=item.id,
+                brand=item.brand,
+                flavor_name=item.flavor_name,
+                strength=item.strength,
+                cost_per_gram=item.cost_per_gram,
+                balance_grams=balance,
+                stock_value=value,
+            )
+        )
+    return result
+
+
+def _record_movement(
+    db: Session,
+    tobacco_id: int,
+    kind: StockMovementKind,
+    delta_grams: float,
+    *,
+    cost_per_gram: float | None = None,
+    comment: str | None = None,
+    inventory_session_id: int | None = None,
+) -> StockMovement:
+    item = db.scalar(select(TobaccoCatalog).where(TobaccoCatalog.id == tobacco_id))
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Позиция каталога не найдена")
+
+    movement = StockMovement(
+        tobacco_id=tobacco_id,
+        kind=kind,
+        delta_grams=delta_grams,
+        cost_per_gram=cost_per_gram,
+        comment=comment,
+        inventory_session_id=inventory_session_id,
+    )
+    db.add(movement)
+    return movement
+
+
+@router.post("/stock/receipt", response_model=StockMovementRead, status_code=status.HTTP_201_CREATED)
+def create_receipt(
+    payload: StockMovementCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> StockMovementRead:
+    movement = _record_movement(
+        db,
+        payload.tobacco_id,
+        StockMovementKind.receipt,
+        payload.grams,
+        cost_per_gram=payload.cost_per_gram,
+        comment=payload.comment,
+    )
+    # Если по позиции ещё не задана себестоимость, а её передали при приходе — сохраним.
+    if payload.cost_per_gram is not None:
+        item = db.scalar(select(TobaccoCatalog).where(TobaccoCatalog.id == payload.tobacco_id))
+        if item is not None and item.cost_per_gram is None:
+            item.cost_per_gram = payload.cost_per_gram
+    db.commit()
+    db.refresh(movement)
+    return StockMovementRead.model_validate(movement)
+
+
+@router.post("/stock/writeoff", response_model=StockMovementRead, status_code=status.HTTP_201_CREATED)
+def create_writeoff(
+    payload: StockMovementCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> StockMovementRead:
+    movement = _record_movement(
+        db,
+        payload.tobacco_id,
+        StockMovementKind.writeoff,
+        -payload.grams,
+        comment=payload.comment,
+    )
+    db.commit()
+    db.refresh(movement)
+    return StockMovementRead.model_validate(movement)
+
+
+@router.get("/stock/{tobacco_id}/movements", response_model=list[StockMovementRead])
+def list_movements(
+    tobacco_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> list[StockMovementRead]:
+    movements = db.scalars(
+        select(StockMovement)
+        .where(StockMovement.tobacco_id == tobacco_id)
+        .order_by(StockMovement.created_at.desc(), StockMovement.id.desc())
+    ).all()
+    return [StockMovementRead.model_validate(item) for item in movements]
+
+
+# ── Инвентаризация ─────────────────────────────────────────────────
+
+def serialize_inventory_session(session: InventorySession) -> InventorySessionRead:
+    counted = [line for line in session.lines if line.counted_grams is not None]
+    diff_total = sum(line.counted_grams - line.expected_grams for line in counted)
+    return InventorySessionRead(
+        id=session.id,
+        status=session.status,
+        comment=session.comment,
+        created_at=session.created_at,
+        completed_at=session.completed_at,
+        lines_total=len(session.lines),
+        lines_counted=len(counted),
+        diff_total=float(diff_total),
+    )
+
+
+def serialize_inventory_line(line: InventoryLine) -> InventoryLineRead:
+    diff = line.counted_grams - line.expected_grams if line.counted_grams is not None else None
+    return InventoryLineRead(
+        id=line.id,
+        tobacco_id=line.tobacco_id,
+        brand=line.tobacco.brand,
+        flavor_name=line.tobacco.flavor_name,
+        strength=line.tobacco.strength,
+        expected_grams=line.expected_grams,
+        counted_grams=line.counted_grams,
+        tare_weight=line.tare_weight,
+        gross_weight=line.gross_weight,
+        diff_grams=float(diff) if diff is not None else None,
+    )
+
+
+def serialize_stock_document(document: StockDocument) -> StockDocumentRead:
+    return StockDocumentRead(
+        id=document.id,
+        kind=document.kind,
+        inventory_session_id=document.inventory_session_id,
+        comment=document.comment,
+        created_at=document.created_at,
+        lines=[
+            StockDocumentLineRead(
+                tobacco_id=movement.tobacco_id,
+                brand=movement.tobacco.brand,
+                flavor_name=movement.tobacco.flavor_name,
+                strength=movement.tobacco.strength,
+                grams=abs(movement.delta_grams),
+                cost_per_gram=movement.cost_per_gram,
+            )
+            for movement in document.movements
+        ],
+    )
+
+
+def load_session_documents(db: Session, session_id: int) -> list[StockDocument]:
+    return list(
+        db.scalars(
+            select(StockDocument)
+            .options(joinedload(StockDocument.movements).joinedload(StockMovement.tobacco))
+            .where(StockDocument.inventory_session_id == session_id)
+            .order_by(StockDocument.id)
+        )
+        .unique()
+        .all()
+    )
+
+
+def serialize_inventory_detail(session: InventorySession, documents: list[StockDocument]) -> InventorySessionDetail:
+    base = serialize_inventory_session(session)
+    return InventorySessionDetail(
+        **base.model_dump(),
+        lines=[serialize_inventory_line(line) for line in session.lines],
+        documents=[serialize_stock_document(document) for document in documents],
+    )
+
+
+def load_session(db: Session, session_id: int) -> InventorySession:
+    session = db.scalar(
+        select(InventorySession)
+        .options(joinedload(InventorySession.lines).joinedload(InventoryLine.tobacco))
+        .where(InventorySession.id == session_id)
+    )
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Инвентаризация не найдена")
+    return session
+
+
+def inventory_detail_response(db: Session, session_id: int) -> InventorySessionDetail:
+    session = load_session(db, session_id)
+    return serialize_inventory_detail(session, load_session_documents(db, session_id))
+
+
+@router.get("/inventories", response_model=list[InventorySessionRead])
+def list_inventories(db: Session = Depends(get_db), _: User = Depends(get_current_admin)) -> list[InventorySessionRead]:
+    sessions = (
+        db.scalars(
+            select(InventorySession)
+            .options(joinedload(InventorySession.lines))
+            .order_by(InventorySession.created_at.desc())
+        )
+        .unique()
+        .all()
+    )
+    return [serialize_inventory_session(session) for session in sessions]
+
+
+@router.post("/inventories", response_model=InventorySessionDetail, status_code=status.HTTP_201_CREATED)
+def create_inventory(
+    payload: InventorySessionCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> InventorySessionDetail:
+    # Пустая сессия: позиции добавляются через поиск (не вываливаем весь каталог).
+    session = InventorySession(comment=payload.comment)
+    db.add(session)
+    db.commit()
+    return inventory_detail_response(db, session.id)
+
+
+@router.get("/inventories/{session_id}", response_model=InventorySessionDetail)
+def get_inventory(
+    session_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> InventorySessionDetail:
+    return inventory_detail_response(db, session_id)
+
+
+@router.post("/inventories/{session_id}/lines", response_model=InventorySessionDetail, status_code=status.HTTP_201_CREATED)
+def add_inventory_line(
+    session_id: int,
+    payload: InventoryLineAdd,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> InventorySessionDetail:
+    session = load_session(db, session_id)
+    if session.status is InventoryStatus.completed:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Инвентаризация завершена")
+
+    item = db.scalar(select(TobaccoCatalog).where(TobaccoCatalog.id == payload.tobacco_id))
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Позиция каталога не найдена")
+    if any(line.tobacco_id == payload.tobacco_id for line in session.lines):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Позиция уже добавлена в инвентаризацию")
+
+    balance = _balances(db).get(payload.tobacco_id, 0.0)
+    db.add(InventoryLine(session_id=session_id, tobacco_id=payload.tobacco_id, expected_grams=balance))
+    db.commit()
+    return inventory_detail_response(db, session_id)
+
+
+@router.delete("/inventories/{session_id}/lines/{line_id}", response_model=InventorySessionDetail)
+def remove_inventory_line(
+    session_id: int,
+    line_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> InventorySessionDetail:
+    line = db.scalar(
+        select(InventoryLine)
+        .options(joinedload(InventoryLine.session))
+        .where(InventoryLine.id == line_id, InventoryLine.session_id == session_id)
+    )
+    if line is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Строка инвентаризации не найдена")
+    if line.session.status is InventoryStatus.completed:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Инвентаризация завершена")
+
+    db.delete(line)
+    db.commit()
+    return inventory_detail_response(db, session_id)
+
+
+@router.patch("/inventories/{session_id}/lines/{line_id}", response_model=InventoryLineRead)
+def update_inventory_line(
+    session_id: int,
+    line_id: int,
+    payload: InventoryLineUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> InventoryLineRead:
+    line = db.scalar(
+        select(InventoryLine)
+        .options(joinedload(InventoryLine.tobacco), joinedload(InventoryLine.session))
+        .where(InventoryLine.id == line_id, InventoryLine.session_id == session_id)
+    )
+    if line is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Строка инвентаризации не найдена")
+    if line.session.status is InventoryStatus.completed:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Инвентаризация уже проведена")
+
+    data = payload.model_dump(exclude_unset=True)
+    if "tare_weight" in data:
+        line.tare_weight = data["tare_weight"]
+    if "gross_weight" in data:
+        line.gross_weight = data["gross_weight"]
+
+    # Факт: явный net приоритетнее; иначе, если заданы тара и брутто — считаем нетто.
+    if "counted_grams" in data and data["counted_grams"] is not None:
+        line.counted_grams = data["counted_grams"]
+    elif line.tare_weight is not None and line.gross_weight is not None:
+        line.counted_grams = max(line.gross_weight - line.tare_weight, 0.0)
+    elif "counted_grams" in data:
+        line.counted_grams = data["counted_grams"]  # позволяем явно очистить (None)
+
+    db.add(line)
+    db.commit()
+    db.refresh(line)
+    return serialize_inventory_line(line)
+
+
+def _build_document(
+    db: Session,
+    payload: StockDocumentCreate,
+    *,
+    inventory_session_id: int | None,
+    allowed_ids: set[int] | None = None,
+) -> StockDocument:
+    """Создать документ оприходования/списания и его движения.
+    allowed_ids — ограничение по позициям (для документов из инвентаризации)."""
+    sign = 1.0 if payload.kind is StockMovementKind.receipt else -1.0
+    document = StockDocument(kind=payload.kind, inventory_session_id=inventory_session_id, comment=payload.comment)
+    for entry in payload.lines:
+        if allowed_ids is not None and entry.tobacco_id not in allowed_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Позиция не входит в эту инвентаризацию",
+            )
+        item = db.scalar(select(TobaccoCatalog).where(TobaccoCatalog.id == entry.tobacco_id))
+        if item is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Позиция каталога не найдена")
+        document.movements.append(
+            StockMovement(
+                tobacco_id=entry.tobacco_id,
+                kind=payload.kind,
+                delta_grams=sign * entry.grams,
+                cost_per_gram=entry.cost_per_gram,
+                inventory_session_id=inventory_session_id,
+                comment="Оприходование" if payload.kind is StockMovementKind.receipt else "Списание",
+            )
+        )
+        # При оприходовании с ценой обновляем себестоимость позиции (последняя цена).
+        if payload.kind is StockMovementKind.receipt and entry.cost_per_gram is not None:
+            item.cost_per_gram = entry.cost_per_gram
+
+    db.add(document)
+    db.commit()
+    return document
+
+
+@router.get("/stock/documents", response_model=list[StockDocumentRead])
+def list_stock_documents(db: Session = Depends(get_db), _: User = Depends(get_current_admin)) -> list[StockDocumentRead]:
+    documents = (
+        db.scalars(
+            select(StockDocument)
+            .options(joinedload(StockDocument.movements).joinedload(StockMovement.tobacco))
+            .order_by(StockDocument.created_at.desc(), StockDocument.id.desc())
+        )
+        .unique()
+        .all()
+    )
+    return [serialize_stock_document(document) for document in documents]
+
+
+@router.delete("/stock/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_stock_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> None:
+    """Удалить документ: его движения тоже удаляются (каскад), остаток восстанавливается."""
+    document = db.scalar(select(StockDocument).where(StockDocument.id == document_id))
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Документ не найден")
+    db.delete(document)
+    db.commit()
+
+
+@router.post("/stock/documents", response_model=StockDocumentRead, status_code=status.HTTP_201_CREATED)
+def create_stock_document(
+    payload: StockDocumentCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> StockDocumentRead:
+    """Самостоятельный документ оприходования/списания (без инвентаризации)."""
+    document = _build_document(db, payload, inventory_session_id=None)
+    return serialize_stock_document(
+        db.scalar(
+            select(StockDocument)
+            .options(joinedload(StockDocument.movements).joinedload(StockMovement.tobacco))
+            .where(StockDocument.id == document.id)
+        )
+    )
+
+
+@router.post("/inventories/{session_id}/documents", response_model=InventorySessionDetail, status_code=status.HTTP_201_CREATED)
+def create_inventory_document(
+    session_id: int,
+    payload: StockDocumentCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> InventorySessionDetail:
+    """Создать из инвентаризации документ оприходования или списания.
+    Строки предзаполняются на фронте разницей (факт − по базе), но приходят явно."""
+    session = load_session(db, session_id)
+    _build_document(
+        db,
+        payload,
+        inventory_session_id=session_id,
+        allowed_ids={line.tobacco_id for line in session.lines},
+    )
+    return inventory_detail_response(db, session_id)
+
+
+@router.post("/inventories/{session_id}/save", response_model=InventorySessionDetail)
+def save_inventory(
+    session_id: int,
+    payload: InventoryLineBulkSave,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> InventorySessionDetail:
+    """Пакетно сохранить пересчёт: факт по всем строкам разом (без построчных запросов).
+    Значения приходят уже посчитанными (нетто), тара/брутто — для истории."""
+    session = load_session(db, session_id)
+    lines_by_id = {line.id: line for line in session.lines}
+    for item in payload.lines:
+        line = lines_by_id.get(item.line_id)
+        if line is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Строка инвентаризации не найдена")
+        line.counted_grams = item.counted_grams
+        line.tare_weight = item.tare_weight
+        line.gross_weight = item.gross_weight
+        db.add(line)
+    db.commit()
+    return inventory_detail_response(db, session_id)
+
+
+@router.delete("/inventories/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_inventory(
+    session_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> None:
+    session = db.scalar(select(InventorySession).where(InventorySession.id == session_id))
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Инвентаризация не найдена")
+    if session.status is InventoryStatus.completed:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Проведённую инвентаризацию нельзя удалить")
+
+    db.delete(session)
+    db.commit()
 
 
 @router.get("/guests", response_model=list[GuestRead])

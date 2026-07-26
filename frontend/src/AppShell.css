@@ -180,10 +180,44 @@
 }
 
 .admin-tabs {
-  grid-template-columns: repeat(5, auto);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
   margin-top: 18px;
   margin-bottom: 18px;
+}
+
+/* Второй ряд подменю «Склад» */
+.admin-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -8px 0 18px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(214, 160, 74, 0.3);
+  background: rgba(72, 43, 31, 0.32);
+}
+
+.subtab-button {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(243, 224, 208, 0.82);
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.subtab-button:hover {
+  color: #f3e0d0;
+}
+
+.subtab-button-active {
+  background: rgba(214, 160, 74, 0.25);
+  border-color: rgba(214, 160, 74, 0.6);
+  color: #f0c98a;
 }
 
 .tab-button-active {
@@ -691,10 +725,70 @@ textarea {
 
 .inventory-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) 110px 110px 120px auto;
+  grid-template-columns: minmax(150px, 1fr) 120px minmax(240px, 1.4fr) 80px 90px auto;
   gap: 10px;
   align-items: center;
-  min-width: 640px;
+  min-width: 820px;
+}
+
+.inventory-measure {
+  display: grid;
+  gap: 6px;
+}
+
+.measure-mode {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.mode-btn {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(214, 160, 74, 0.35);
+  background: transparent;
+  color: rgba(243, 224, 208, 0.8);
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.mode-btn-active {
+  background: rgba(214, 160, 74, 0.25);
+  color: #f0c98a;
+  border-color: rgba(214, 160, 74, 0.6);
+}
+
+.measure-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.inventory-measure input {
+  width: 100%;
+}
+
+.inventory-expected {
+  font-weight: 600;
+  color: rgba(243, 224, 208, 0.85);
+}
+
+.inventory-diff-neg {
+  color: #f2b8b8;
+  font-weight: 600;
+}
+
+.inventory-diff-pos {
+  color: #c9f2d1;
+  font-weight: 600;
+}
+
+.inventory-session-card .guest-card-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pill-inline-warn {
+  background: rgba(214, 160, 74, 0.22);
+  color: #f0c98a;
 }
 
 .inventory-row input {
@@ -760,4 +854,112 @@ textarea {
 
 .stock-empty {
   color: rgba(243, 224, 208, 0.5);
+}
+
+/* One tare for all inventory rows */
+.inventory-tare-all {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 4px 0 12px;
+}
+
+.inventory-tare-all label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: rgba(243, 224, 208, 0.7);
+}
+
+.inventory-tare-all input {
+  width: 140px;
+}
+
+.inventory-tare-all .ghost-button {
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+
+/* Document editor built from inventory diffs */
+.doc-editor {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(214, 160, 74, 0.35);
+  background: rgba(72, 43, 31, 0.4);
+  display: grid;
+  gap: 10px;
+}
+
+.doc-editor h4 {
+  margin: 0;
+}
+
+.doc-lines {
+  display: grid;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.doc-line {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 120px;
+  gap: 10px;
+  align-items: center;
+  min-width: 360px;
+}
+
+.doc-line-receipt {
+  grid-template-columns: minmax(180px, 1fr) 120px 120px;
+  min-width: 480px;
+}
+
+.doc-line-removable {
+  grid-template-columns: minmax(180px, 1fr) 120px auto;
+}
+
+.doc-line-removable.doc-line-receipt {
+  grid-template-columns: minmax(180px, 1fr) 120px 120px auto;
+}
+
+.doc-line.doc-head {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(243, 224, 208, 0.6);
+}
+
+.doc-line input {
+  width: 100%;
+}
+
+/* Created documents history */
+.doc-history {
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.doc-history h4 {
+  margin: 0;
+}
+
+.doc-history-item {
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(72, 43, 31, 0.4);
+  display: grid;
+  gap: 6px;
+}
+
+.doc-history-item small {
+  color: rgba(243, 224, 208, 0.6);
+}
+
+.doc-history-lines {
+  display: grid;
+  gap: 2px;
+  font-size: 0.85rem;
+  color: rgba(243, 224, 208, 0.82);
 }

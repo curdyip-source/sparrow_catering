@@ -7,7 +7,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.core.settings import get_settings
 from app.db.base import Base
-from app.models import company, guest, lead, order, pricing_config, tobacco, user  # noqa: F401
+from app.models import company, guest, lead, order, pricing_config, stock, tobacco, user  # noqa: F401
 
 config = context.config
 settings = get_settings()
