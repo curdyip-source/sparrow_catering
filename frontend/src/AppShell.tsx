@@ -362,6 +362,13 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(value)
 }
 
+function formatPositions(count: number) {
+  const tail = count % 100
+  const last = count % 10
+  const word = tail >= 11 && tail <= 14 ? 'позиций' : last === 1 ? 'позиция' : last >= 2 && last <= 4 ? 'позиции' : 'позиций'
+  return `${count} ${word}`
+}
+
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat('ru-RU', {
     dateStyle: 'medium',
@@ -497,6 +504,10 @@ function AppShell() {
   const [tobaccoQuery, setTobaccoQuery] = useState('')
   const [tobaccoForm, setTobaccoForm] = useState(initialTobaccoForm)
   const [tobaccoBusy, setTobaccoBusy] = useState(false)
+  // Выбранный бренд в меню каталога; пустая строка — «Все бренды».
+  const [catalogBrand, setCatalogBrand] = useState('')
+  // Оверлей каталога: null — создаём новую позицию, id — правим существующую.
+  const [editingTobaccoId, setEditingTobaccoId] = useState<number | null>(null)
   const [stockBrand, setStockBrand] = useState('')
   const [stockStrength, setStockStrength] = useState('')
   const [stockRows, setStockRows] = useState<StockBalance[]>([])
@@ -514,6 +525,10 @@ function AppShell() {
   const [saBusy, setSaBusy] = useState(false)
   // Если документ открыт из инвентаризации — её id (для привязки и возврата).
   const [saSessionId, setSaSessionId] = useState<number | null>(null)
+  // Если правим уже созданный документ — его id (иначе создаём новый).
+  const [saDocId, setSaDocId] = useState<number | null>(null)
+  const [saComment, setSaComment] = useState('')
+  const [saCreatedAt, setSaCreatedAt] = useState<string | null>(null)
   const [lastWarehouse, setLastWarehouse] = useState<'inventory' | 'receipts' | 'writeoffs' | 'stock'>('inventory')
   const [guests, setGuests] = useState<Guest[]>([])
   const [guestQuery, setGuestQuery] = useState('')
@@ -769,6 +784,19 @@ function AppShell() {
   const filteredTobacco = normalizedTobaccoQuery
     ? tobaccoCatalog.filter((item) => matchesTobacco(item, normalizedTobaccoQuery))
     : tobaccoCatalog
+
+  // Каталог: слева меню брендов (с «Все»), справа позиции выбранного бренда.
+  const catalogBrandCounts = filteredTobacco.reduce((counts, item) => {
+    counts.set(item.brand, (counts.get(item.brand) ?? 0) + 1)
+    return counts
+  }, new Map<string, number>())
+  const catalogBrands = Array.from(catalogBrandCounts.keys()).sort((left, right) => left.localeCompare(right, 'ru'))
+  const catalogItems = filteredTobacco
+    .filter((item) => !catalogBrand || item.brand === catalogBrand)
+    .sort(
+      (left, right) =>
+        left.brand.localeCompare(right.brand, 'ru') || left.flavor_name.localeCompare(right.flavor_name, 'ru'),
+    )
 
   const tobaccoBrands = Array.from(new Set(tobaccoCatalog.map((item) => item.brand))).sort((a, b) => a.localeCompare(b, 'ru'))
   const tobaccoStrengths = Array.from(new Set(tobaccoCatalog.map((item) => item.strength))).sort((a, b) => a.localeCompare(b, 'ru'))
@@ -1068,9 +1096,10 @@ function AppShell() {
     event.preventDefault()
     setTobaccoBusy(true)
 
+    const editingId = editingTobaccoId
     try {
-      await authorizedFetch('/api/v1/admin/tobacco', {
-        method: 'POST',
+      await authorizedFetch(editingId != null ? `/api/v1/admin/tobacco/${editingId}` : '/api/v1/admin/tobacco', {
+        method: editingId != null ? 'PATCH' : 'POST',
         body: JSON.stringify({
           strength: tobaccoForm.strength,
           brand: tobaccoForm.brand,
@@ -1079,9 +1108,10 @@ function AppShell() {
         }),
       })
       resetTobaccoForm()
+      setEditingTobaccoId(null)
       setEditorOverlay(null)
-      await loadTobacco(tobaccoQuery)
-      setNotice('Позиция табака добавлена в каталог')
+      await Promise.all([loadTobacco(tobaccoQuery), loadStock()])
+      setNotice(editingId != null ? 'Позиция каталога обновлена' : 'Позиция табака добавлена в каталог')
       setNoticeTone('neutral')
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Не удалось сохранить табак')
@@ -1311,6 +1341,9 @@ function AppShell() {
       setSaLines(prefilled)
       setSaQuery('')
       setSaSessionId(detail.id)
+      setSaDocId(null)
+      setSaComment('')
+      setSaCreatedAt(null)
       setLastWarehouse(kind === 'receipt' ? 'receipts' : 'writeoffs')
       setAdminTab(kind === 'receipt' ? 'receipts' : 'writeoffs')
     } catch (error) {
@@ -1327,6 +1360,33 @@ function AppShell() {
     setSaLines([])
     setSaQuery('')
     setSaSessionId(null)
+    setSaDocId(null)
+    setSaComment('')
+    setSaCreatedAt(null)
+  }
+
+  // Открыть уже проведённый документ на правку: количества и себестоимость.
+  const openDocumentForEdit = (doc: StockDocument) => {
+    if (doc.kind !== 'receipt' && doc.kind !== 'writeoff') {
+      return
+    }
+    setSaKind(doc.kind)
+    setSaLines(
+      doc.lines.map((line) => ({
+        tobaccoId: line.tobacco_id,
+        label: `${line.brand} — ${line.flavor_name}`,
+        grams: line.grams.toString(),
+        cost: line.cost_per_gram != null ? line.cost_per_gram.toString() : '',
+      })),
+    )
+    setSaQuery('')
+    setSaSessionId(null)
+    setSaDocId(doc.id)
+    setSaComment(doc.comment ?? '')
+    setSaCreatedAt(doc.created_at)
+    // Страница документа живёт во вкладке своего типа — из инвентаризации переходим туда.
+    setLastWarehouse(doc.kind === 'receipt' ? 'receipts' : 'writeoffs')
+    setAdminTab(doc.kind === 'receipt' ? 'receipts' : 'writeoffs')
   }
 
   const closeStandaloneDoc = () => {
@@ -1334,6 +1394,9 @@ function AppShell() {
     setSaLines([])
     setSaQuery('')
     setSaSessionId(null)
+    setSaDocId(null)
+    setSaComment('')
+    setSaCreatedAt(null)
   }
 
   const cancelDoc = () => {
@@ -1352,48 +1415,122 @@ function AppShell() {
     setAdminTab(tab)
   }
 
-  // Вкладка «Оприходование»/«Списание»: создание проводки без инвента + список
-  // документов этого типа (в т.ч. рождённых из инвентаризации).
+  // Строка реестра документов: только шапка и итоги, без перечня позиций —
+  // состав раскрывается в редакторе по клику на строку.
+  const renderDocRow = (doc: StockDocument) => {
+    const label = doc.kind === 'receipt' ? 'Оприходование' : 'Списание'
+    const sign = doc.kind === 'receipt' ? '+' : '−'
+    const grams = doc.lines.reduce((total, line) => total + line.grams, 0)
+    const priced = doc.lines.filter((line) => line.cost_per_gram != null)
+    const value = priced.reduce((total, line) => total + line.grams * (line.cost_per_gram ?? 0), 0)
+    const open = () => openDocumentForEdit(doc)
+    return (
+      <div
+        key={doc.id}
+        className="doc-history-item doc-history-row clickable-row"
+        role="button"
+        tabIndex={0}
+        aria-label={`${label} #${doc.id} — открыть`}
+        onClick={open}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            open()
+          }
+        }}
+      >
+        <div className="doc-row-main">
+          <span className={doc.kind === 'receipt' ? 'pill-inline' : 'pill-inline pill-inline-warn'}>{label} #{doc.id}</span>
+          <small>{formatDateTime(doc.created_at)}</small>
+          {doc.inventory_session_id != null ? <small>· из инвентаризации #{doc.inventory_session_id}</small> : null}
+          {doc.comment ? <small>· {doc.comment}</small> : null}
+        </div>
+        <div className="doc-row-meta">
+          <span className="doc-row-total">{formatPositions(doc.lines.length)} · {sign}{formatNumber(grams)} г</span>
+          {doc.kind === 'receipt' ? (
+            priced.length === 0 ? (
+              <small className="doc-row-flag">себестоимость не заполнена</small>
+            ) : (
+              <small>{priced.length < doc.lines.length ? 'частично ' : ''}{formatCurrency(value)}</small>
+            )
+          ) : null}
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Удалить документ"
+            onClick={(event) => {
+              event.stopPropagation()
+              deleteDocument(doc.id)
+            }}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Страница документа: открывается вместо реестра (проваливаемся внутрь).
+  // Здесь и создание нового, и просмотр/правка уже проведённого.
+  const renderDocPage = (kind: DocKind) => {
+    const title = kind === 'receipt' ? 'Оприходование' : 'Списание'
+    const grams = saLines.reduce((total, line) => total + (Number(line.grams) || 0), 0)
+    const value = saLines.reduce((total, line) => total + (Number(line.grams) || 0) * (Number(line.cost) || 0), 0)
+    const backLabel = saSessionId != null ? '← К инвентаризации' : `← К списку «${title}»`
+    return (
+      <div className="admin-card doc-page">
+        <div className="card-header">
+          <div className="header-inline-actions"><button type="button" className="ghost-button" onClick={cancelDoc}>{backLabel}</button></div>
+          <div className="header-inline-actions">
+            {saDocId != null ? <button type="button" className="ghost-button" onClick={() => deleteDocument(saDocId)}>Удалить документ</button> : null}
+            <button type="button" className="primary-button" disabled={saBusy} onClick={submitStandaloneDoc}>{saBusy ? '...' : saDocId != null ? 'Сохранить' : 'Создать документ'}</button>
+          </div>
+        </div>
+
+        <div className="doc-page-head">
+          <h3>{saDocId != null ? `${title} #${saDocId}` : kind === 'receipt' ? 'Новое оприходование' : 'Новое списание'}</h3>
+          <div className="doc-page-meta">
+            {saCreatedAt ? <small>{formatDateTime(saCreatedAt)}</small> : null}
+            {saSessionId != null ? <span className="pill-inline">из инвентаризации #{saSessionId}</span> : null}
+            <span className="doc-row-total">{formatPositions(saLines.length)} · {kind === 'receipt' ? '+' : '−'}{formatNumber(grams)} г{kind === 'receipt' && value > 0 ? ` · ${formatCurrency(value)}` : ''}</span>
+          </div>
+        </div>
+
+        <div className="doc-page-body">
+          <div className="header-search-slot"><input className="compact-input" placeholder="Комментарий к документу (необязательно)" value={saComment} onChange={(event) => setSaComment(event.target.value)} /></div>
+          <div className="header-search-slot inventory-search"><input className="compact-input" placeholder="Найдите позицию по бренду или аромату и добавьте" value={saQuery} onChange={(event) => setSaQuery(event.target.value)} /></div>
+          {saSearchResults.length > 0 ? <div className="company-search-results">{saSearchResults.map((item) => <button key={item.id} type="button" className="company-result" onClick={() => addStandaloneLine(item)}><strong>{item.brand} — {item.flavor_name}</strong><span className="company-result-separator">•</span><span>{item.strength}</span></button>)}</div> : null}
+          {saLines.length > 0 ? (
+            <div className="doc-lines">
+              <div className={kind === 'receipt' ? 'doc-line doc-line-removable doc-line-receipt doc-head' : 'doc-line doc-line-removable doc-head'}><span>Позиция</span><span>Граммы</span>{kind === 'receipt' ? <span>₽/г</span> : null}<span></span></div>
+              {saLines.map((line, index) => (
+                <div key={line.tobaccoId} className={kind === 'receipt' ? 'doc-line doc-line-removable doc-line-receipt' : 'doc-line doc-line-removable'}>
+                  <span className="inventory-name"><strong>{line.label}</strong></span>
+                  <input type="number" min="0" step="0.1" inputMode="decimal" placeholder="г" value={line.grams} onChange={(event) => updateStandaloneLine(index, 'grams', event.target.value)} />
+                  {kind === 'receipt' ? <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="₽/г" value={line.cost} onChange={(event) => updateStandaloneLine(index, 'cost', event.target.value)} /> : null}
+                  <button type="button" className="icon-button" aria-label="Убрать позицию" onClick={() => removeStandaloneLine(index)}>×</button>
+                </div>
+              ))}
+            </div>
+          ) : <p className="summary-hint">Добавьте позиции через поиск выше.</p>}
+        </div>
+      </div>
+    )
+  }
+
+  // Вкладка «Оприходование»/«Списание»: реестр документов этого типа (в т.ч.
+  // рождённых из инвентаризации). Клик по строке проваливает на страницу документа.
   const renderDocTab = (kind: DocKind) => {
+    if (saKind === kind) {
+      return renderDocPage(kind)
+    }
     const title = kind === 'receipt' ? 'Оприходование' : 'Списание'
     const list = stockDocuments.filter((doc) => doc.kind === kind)
-    const editing = saKind === kind
     return (
       <div className="admin-card list-card">
-        <div className="card-header"><div className="header-inline-actions"><h3>{title}</h3>{editing ? null : <button type="button" className="inline-create-button" onClick={() => openStandaloneDoc(kind)}>+ Новый документ</button>}</div></div>
-        <p className="summary-hint">{kind === 'receipt' ? 'Приём товара на склад — без инвентаризации или из неё.' : 'Списание со склада — без инвентаризации или из неё.'} Себестоимость {kind === 'receipt' ? 'указывается здесь, при оприходовании.' : 'берётся из последнего оприходования.'}</p>
-
-        {editing ? (
-          <div className="doc-editor">
-            <div className="card-header"><div className="header-inline-actions"><h4>{kind === 'receipt' ? 'Новое оприходование' : 'Новое списание'}</h4>{saSessionId != null ? <span className="pill-inline">из инвентаризации #{saSessionId}</span> : null}</div><div className="header-inline-actions"><button type="button" className="primary-button" disabled={saBusy} onClick={submitStandaloneDoc}>{saBusy ? '...' : 'Создать документ'}</button><button type="button" className="ghost-button" onClick={cancelDoc}>{saSessionId != null ? '← К инвентаризации' : 'Отмена'}</button></div></div>
-            <div className="header-search-slot inventory-search"><input className="compact-input" placeholder="Найдите позицию по бренду или аромату и добавьте" value={saQuery} onChange={(event) => setSaQuery(event.target.value)} /></div>
-            {saSearchResults.length > 0 ? <div className="company-search-results">{saSearchResults.map((item) => <button key={item.id} type="button" className="company-result" onClick={() => addStandaloneLine(item)}><strong>{item.brand} — {item.flavor_name}</strong><span className="company-result-separator">•</span><span>{item.strength}</span></button>)}</div> : null}
-            {saLines.length > 0 ? (
-              <div className="doc-lines">
-                <div className={kind === 'receipt' ? 'doc-line doc-line-removable doc-line-receipt doc-head' : 'doc-line doc-line-removable doc-head'}><span>Позиция</span><span>Граммы</span>{kind === 'receipt' ? <span>₽/г</span> : null}<span></span></div>
-                {saLines.map((line, index) => (
-                  <div key={line.tobaccoId} className={kind === 'receipt' ? 'doc-line doc-line-removable doc-line-receipt' : 'doc-line doc-line-removable'}>
-                    <span className="inventory-name"><strong>{line.label}</strong></span>
-                    <input type="number" min="0" step="0.1" inputMode="decimal" placeholder="г" value={line.grams} onChange={(event) => updateStandaloneLine(index, 'grams', event.target.value)} />
-                    {kind === 'receipt' ? <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="₽/г" value={line.cost} onChange={(event) => updateStandaloneLine(index, 'cost', event.target.value)} /> : null}
-                    <button type="button" className="icon-button" aria-label="Убрать позицию" onClick={() => removeStandaloneLine(index)}>×</button>
-                  </div>
-                ))}
-              </div>
-            ) : <p className="summary-hint">Добавьте позиции через поиск выше.</p>}
-          </div>
-        ) : null}
-
-        {list.length > 0 ? (
-          <div className="doc-history">
-            {list.map((doc) => (
-              <div key={doc.id} className="doc-history-item">
-                <div className="card-header"><div className="header-inline-actions"><span className={doc.kind === 'receipt' ? 'pill-inline' : 'pill-inline pill-inline-warn'}>{title} #{doc.id}</span><small>{formatDateTime(doc.created_at)}</small>{doc.inventory_session_id != null ? <small>· из инвентаризации #{doc.inventory_session_id}</small> : null}</div><button type="button" className="icon-button" aria-label="Удалить документ" onClick={() => deleteDocument(doc.id)}>×</button></div>
-                <div className="doc-history-lines">{doc.lines.map((line) => <span key={line.tobacco_id}>{line.brand} — {line.flavor_name}: {doc.kind === 'receipt' ? '+' : '−'}{formatNumber(line.grams)} г{line.cost_per_gram != null ? ` · ${formatNumber(line.cost_per_gram)} ₽/г` : ''}</span>)}</div>
-              </div>
-            ))}
-          </div>
-        ) : <p className="summary-hint">Документов пока нет.</p>}
+        <div className="card-header"><div className="header-inline-actions"><h3>{title}</h3><button type="button" className="inline-create-button" onClick={() => openStandaloneDoc(kind)}>+ Создать</button></div></div>
+        <p className="summary-hint">{kind === 'receipt' ? 'Приём товара на склад — без инвентаризации или из неё.' : 'Списание со склада — без инвентаризации или из неё.'} Себестоимость {kind === 'receipt' ? 'указывается внутри документа, при оприходовании.' : 'берётся из последнего оприходования.'} Откройте документ, чтобы увидеть состав.</p>
+        {list.length > 0 ? <div className="doc-history">{list.map(renderDocRow)}</div> : <p className="summary-hint">Документов пока нет.</p>}
       </div>
     )
   }
@@ -1431,15 +1568,32 @@ function AppShell() {
       setNoticeTone('error')
       return
     }
+    const comment = saComment.trim() === '' ? null : saComment.trim()
     const kind = saKind
     const sessionId = saSessionId
+    const docId = saDocId
     setSaBusy(true)
     try {
+      if (docId != null) {
+        // Правка существующего документа: строки переписываются целиком.
+        await authorizedFetch(`/api/v1/admin/stock/documents/${docId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ comment, lines }),
+        })
+        await Promise.all([loadStockDocuments(), loadStock(), loadInventories()])
+        if (activeInventory) {
+          await refreshInventory()
+        }
+        closeStandaloneDoc()
+        setNotice('Документ обновлён, остатки пересчитаны')
+        setNoticeTone('neutral')
+        return
+      }
       if (sessionId != null) {
         // Документ из инвентаризации — привязываем и возвращаемся к сессии.
         const response = await authorizedFetch(`/api/v1/admin/inventories/${sessionId}/documents`, {
           method: 'POST',
-          body: JSON.stringify({ kind, lines }),
+          body: JSON.stringify({ kind, comment, lines }),
         })
         const detail = (await response.json()) as InventorySessionDetail
         setActiveInventory(detail)
@@ -1450,7 +1604,7 @@ function AppShell() {
       } else {
         await authorizedFetch('/api/v1/admin/stock/documents', {
           method: 'POST',
-          body: JSON.stringify({ kind, lines }),
+          body: JSON.stringify({ kind, comment, lines }),
         })
         await Promise.all([loadStockDocuments(), loadStock()])
         closeStandaloneDoc()
@@ -1494,6 +1648,10 @@ function AppShell() {
   const deleteDocument = async (documentId: number) => {
     try {
       await authorizedFetch(`/api/v1/admin/stock/documents/${documentId}`, { method: 'DELETE' })
+      // Удалили тот, что открыт на странице документа — возвращаемся к реестру.
+      if (saDocId === documentId) {
+        closeStandaloneDoc()
+      }
       await Promise.all([loadStockDocuments(), loadStock(), loadInventories()])
       if (activeInventory) {
         await refreshInventory()
@@ -1541,6 +1699,18 @@ function AppShell() {
 
   const openCreateTobacco = () => {
     resetTobaccoForm()
+    setEditingTobaccoId(null)
+    setEditorOverlay('tobacco')
+  }
+
+  const startEditingTobacco = (item: TobaccoItem) => {
+    setTobaccoForm({
+      strength: item.strength,
+      brand: item.brand,
+      flavorName: item.flavor_name,
+      description: item.description ?? '',
+    })
+    setEditingTobaccoId(item.id)
     setEditorOverlay('tobacco')
   }
 
@@ -1932,7 +2102,42 @@ function AppShell() {
               {adminTab === 'tobacco' ? (
                 <div className="admin-card list-card">
                   <div className="card-header"><div className="header-inline-actions"><h3>Каталог табака</h3><button type="button" className="inline-create-button" onClick={openCreateTobacco}>+ Новая позиция каталога</button></div><div className="header-search-slot"><input className="compact-input compact-input-narrow" placeholder="Поиск по бренду или аромату" value={tobaccoQuery} onChange={(event) => setTobaccoQuery(event.target.value)} /></div></div>
-                  <div className="stack-list">{filteredTobacco.map((item) => <article key={item.id} className="list-item tobacco-card"><div className="tobacco-head"><strong>{item.brand} — {item.flavor_name}</strong><span className="pill-inline">{item.strength}</span></div>{item.description ? <p className="tobacco-description">{item.description}</p> : null}</article>)}</div>
+                  <div className="catalog-layout">
+                    <nav className="catalog-brands" aria-label="Бренды">
+                      <button type="button" className={catalogBrand === '' ? 'catalog-brand catalog-brand-active' : 'catalog-brand'} onClick={() => setCatalogBrand('')}>
+                        <span>Все бренды</span><small>{filteredTobacco.length}</small>
+                      </button>
+                      {catalogBrands.map((brand) => (
+                        <button key={brand} type="button" className={catalogBrand === brand ? 'catalog-brand catalog-brand-active' : 'catalog-brand'} onClick={() => setCatalogBrand(brand)}>
+                          <span>{brand}</span><small>{catalogBrandCounts.get(brand)}</small>
+                        </button>
+                      ))}
+                    </nav>
+
+                    <div className="catalog-items">
+                      {catalogItems.length > 0 ? (
+                        <div className="stack-list">{catalogItems.map((item) => (
+                          <article
+                            key={item.id}
+                            className="list-item tobacco-card clickable-row"
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`${item.brand} — ${item.flavor_name}: редактировать`}
+                            onClick={() => startEditingTobacco(item)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault()
+                                startEditingTobacco(item)
+                              }
+                            }}
+                          >
+                            <div className="tobacco-head"><strong>{catalogBrand ? item.flavor_name : `${item.brand} — ${item.flavor_name}`}</strong><span className="pill-inline">{item.strength}</span></div>
+                            {item.description ? <p className="tobacco-description">{item.description}</p> : null}
+                          </article>
+                        ))}</div>
+                      ) : <p className="summary-hint">Ничего не найдено.</p>}
+                    </div>
+                  </div>
                 </div>
               ) : null}
 
@@ -1984,27 +2189,42 @@ function AppShell() {
                       {activeInventory.documents.length > 0 ? (
                         <div className="doc-history">
                           <h4>Созданные документы</h4>
-                          {activeInventory.documents.map((doc) => (
-                            <div key={doc.id} className="doc-history-item">
-                              <div className="card-header"><div className="header-inline-actions"><span className={doc.kind === 'receipt' ? 'pill-inline' : 'pill-inline pill-inline-warn'}>{doc.kind === 'receipt' ? 'Оприходование' : 'Списание'} #{doc.id}</span><small>{formatDateTime(doc.created_at)}</small></div><button type="button" className="icon-button" aria-label="Удалить документ" onClick={() => deleteDocument(doc.id)}>×</button></div>
-                              <div className="doc-history-lines">{doc.lines.map((line) => <span key={line.tobacco_id}>{line.brand} — {line.flavor_name}: {doc.kind === 'receipt' ? '+' : '−'}{formatNumber(line.grams)} г{line.cost_per_gram != null ? ` · ${formatNumber(line.cost_per_gram)} ₽/г` : ''}</span>)}</div>
-                            </div>
-                          ))}
+                          {activeInventory.documents.map(renderDocRow)}
                         </div>
                       ) : null}
                     </>
                   ) : (
                     <>
-                      <div className="card-header"><div className="header-inline-actions"><h3>Инвентаризации</h3><button type="button" className="inline-create-button" disabled={inventoryBusy} onClick={startInventory}>+ Начать инвентаризацию</button></div></div>
+                      <div className="card-header"><div className="header-inline-actions"><h3>Инвентаризации</h3><button type="button" className="inline-create-button" disabled={inventoryBusy} onClick={startInventory}>+ Создать</button></div></div>
                       <p className="summary-hint">Начните инвентаризацию, добавьте нужные позиции через поиск (по каждой подтянется текущий остаток по базе), введите факт, а из разницы создайте документ списания или оприходования — он корректирует остатки.</p>
                       {inventories.length > 0 ? (
-                        <div className="stack-list">{inventories.map((session) => (
-                          <article key={session.id} className="list-item inventory-session-card">
-                            <div className="card-header"><div className="header-inline-actions"><strong>Инвентаризация #{session.id}</strong></div><div className="guest-card-actions"><button type="button" className="inline-create-button" onClick={() => openInventory(session.id)}>Открыть</button><button type="button" className="icon-button" aria-label="Удалить инвентаризацию" onClick={() => removeInventory(session.id)}>×</button></div></div>
-                            <div className="guest-card-meta"><p>Создана: {formatDateTime(session.created_at)}</p><p>Позиций: {session.lines_total}</p><p>С фактом: {session.lines_counted}</p><p className={session.diff_total < 0 ? 'inventory-diff-neg' : session.diff_total > 0 ? 'inventory-diff-pos' : ''}>Разница: {session.diff_total > 0 ? '+' : ''}{formatNumber(session.diff_total)} г</p></div>
+                        <div className="doc-history">{inventories.map((session) => (
+                          <article
+                            key={session.id}
+                            className="doc-history-item doc-history-row clickable-row"
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Инвентаризация #${session.id} — открыть`}
+                            onClick={() => openInventory(session.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault()
+                                openInventory(session.id)
+                              }
+                            }}
+                          >
+                            <div className="doc-row-main">
+                              <span className="pill-inline">Инвентаризация #{session.id}</span>
+                              <small>{formatDateTime(session.created_at)}</small>
+                            </div>
+                            <div className="doc-row-meta">
+                              <span className="doc-row-total">{formatPositions(session.lines_total)} · с фактом {session.lines_counted}</span>
+                              {session.lines_counted > 0 ? <small className={session.diff_total < 0 ? 'inventory-diff-neg' : session.diff_total > 0 ? 'inventory-diff-pos' : ''}>{session.diff_total > 0 ? '+' : ''}{formatNumber(session.diff_total)} г</small> : null}
+                              <button type="button" className="icon-button" aria-label="Удалить инвентаризацию" onClick={(event) => { event.stopPropagation(); removeInventory(session.id) }}>×</button>
+                            </div>
                           </article>
                         ))}</div>
-                      ) : <p className="summary-hint">Инвентаризаций ещё не было. Нажмите «Начать инвентаризацию».</p>}
+                      ) : <p className="summary-hint">Инвентаризаций ещё не было. Нажмите «+ Создать».</p>}
                     </>
                   )}
                 </div>
@@ -2080,7 +2300,7 @@ function AppShell() {
       ) : null}
 
       {editorOverlay === 'tobacco' ? (
-        <div className="modal-backdrop no-print" data-html2canvas-ignore="true"><div className="modal-card"><div className="card-header"><h3>Новая позиция каталога</h3><button type="button" className="ghost-button" onClick={() => setEditorOverlay(null)}>Закрыть</button></div><form className="form-card" onSubmit={handleCreateTobacco}><div className="form-grid"><label><span>Крепость</span><input value={tobaccoForm.strength} onChange={(event) => setTobaccoForm((current) => ({ ...current, strength: event.target.value }))} /></label><label><span>Бренд</span><input value={tobaccoForm.brand} onChange={(event) => setTobaccoForm((current) => ({ ...current, brand: event.target.value }))} /></label><label className="field-span-2"><span>Аромат</span><input value={tobaccoForm.flavorName} onChange={(event) => setTobaccoForm((current) => ({ ...current, flavorName: event.target.value }))} /></label><label className="field-span-2"><span>Описание</span><textarea value={tobaccoForm.description} onChange={(event) => setTobaccoForm((current) => ({ ...current, description: event.target.value }))} /></label></div><button type="submit" className="primary-button" disabled={tobaccoBusy}>{tobaccoBusy ? 'Сохраняю...' : 'Добавить в каталог'}</button></form></div></div>
+        <div className="modal-backdrop no-print" data-html2canvas-ignore="true"><div className="modal-card"><div className="card-header"><h3>{editingTobaccoId != null ? 'Позиция каталога' : 'Новая позиция каталога'}</h3><button type="button" className="ghost-button" onClick={() => { setEditorOverlay(null); setEditingTobaccoId(null) }}>Закрыть</button></div><form className="form-card" onSubmit={handleCreateTobacco}><div className="form-grid"><label><span>Крепость</span><input value={tobaccoForm.strength} onChange={(event) => setTobaccoForm((current) => ({ ...current, strength: event.target.value }))} /></label><label><span>Бренд</span><input value={tobaccoForm.brand} onChange={(event) => setTobaccoForm((current) => ({ ...current, brand: event.target.value }))} /></label><label className="field-span-2"><span>Аромат</span><input value={tobaccoForm.flavorName} onChange={(event) => setTobaccoForm((current) => ({ ...current, flavorName: event.target.value }))} /></label><label className="field-span-2"><span>Описание</span><textarea value={tobaccoForm.description} onChange={(event) => setTobaccoForm((current) => ({ ...current, description: event.target.value }))} /></label></div><button type="submit" className="primary-button" disabled={tobaccoBusy}>{tobaccoBusy ? 'Сохраняю...' : editingTobaccoId != null ? 'Сохранить' : 'Добавить в каталог'}</button></form></div></div>
       ) : null}
 
       {createOrderOpen ? (

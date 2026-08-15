@@ -186,6 +186,56 @@ def test_standalone_document_and_registry() -> None:
         assert any(d["id"] == doc["id"] and d["kind"] == "receipt" for d in registry)
 
 
+def test_document_edit_rewrites_lines_and_cost() -> None:
+    with TestClient(app) as client:
+        headers = _admin_headers()
+        tobacco_id = _create_tobacco(client, headers)
+        other_id = client.post(
+            "/api/v1/admin/tobacco",
+            headers=headers,
+            json={"strength": "Лёгкий", "brand": "TestBrand", "flavor_name": "SecondFlavor"},
+        ).json()["id"]
+
+        doc = client.post(
+            "/api/v1/admin/stock/documents",
+            headers=headers,
+            json={"kind": "receipt", "lines": [{"tobacco_id": tobacco_id, "grams": 100}]},
+        ).json()
+
+        # Правим количество, вписываем себестоимость и добавляем вторую строку.
+        updated = client.put(
+            f"/api/v1/admin/stock/documents/{doc['id']}",
+            headers=headers,
+            json={
+                "comment": "Начальные остатки",
+                "lines": [
+                    {"tobacco_id": tobacco_id, "grams": 250, "cost_per_gram": 4},
+                    {"tobacco_id": other_id, "grams": 50, "cost_per_gram": 9},
+                ],
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        payload = updated.json()
+        assert payload["id"] == doc["id"]
+        assert payload["kind"] == "receipt"
+        assert payload["comment"] == "Начальные остатки"
+        assert {line["tobacco_id"]: line["grams"] for line in payload["lines"]} == {tobacco_id: 250, other_id: 50}
+
+        # Остаток пересчитан по новым строкам (старые движения документа удалены),
+        # себестоимость позиции обновлена ценой из документа.
+        stock = {row["tobacco_id"]: row for row in client.get("/api/v1/admin/stock", headers=headers).json()}
+        assert stock[tobacco_id]["balance_grams"] == 250
+        assert stock[tobacco_id]["cost_per_gram"] == 4
+        assert stock[other_id]["balance_grams"] == 50
+        assert stock[other_id]["stock_value"] == 50 * 9
+
+        assert client.put(
+            "/api/v1/admin/stock/documents/999999",
+            headers=headers,
+            json={"lines": [{"tobacco_id": tobacco_id, "grams": 1}]},
+        ).status_code == 404
+
+
 def test_inventory_counted_from_tare_and_gross() -> None:
     with TestClient(app) as client:
         headers = _admin_headers()

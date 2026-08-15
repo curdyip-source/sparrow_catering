@@ -101,7 +101,8 @@
   position: fixed;
   inset: 0;
   display: grid;
-  align-items: start;
+  /* safe center: по центру экрана, но высокая карточка не уезжает под верх окна */
+  align-items: safe center;
   justify-items: center;
   padding: 20px;
   overflow-y: auto;
@@ -684,6 +685,78 @@ textarea {
 }
 
 /* Tobacco catalog card */
+/* Каталог: меню брендов слева, позиции выбранного бренда справа */
+.catalog-layout {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.catalog-brands {
+  display: grid;
+  gap: 4px;
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+
+.catalog-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: rgba(243, 224, 208, 0.78);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.catalog-brand small {
+  color: rgba(243, 224, 208, 0.45);
+}
+
+.catalog-brand:hover,
+.catalog-brand:focus-visible {
+  background: rgba(72, 43, 31, 0.55);
+  border-color: rgba(214, 160, 74, 0.28);
+  outline: none;
+}
+
+.catalog-brand-active,
+.catalog-brand-active:hover {
+  background: rgba(214, 160, 74, 0.2);
+  border-color: rgba(214, 160, 74, 0.45);
+  color: #f7e6d2;
+}
+
+.catalog-brand-active small {
+  color: rgba(247, 230, 210, 0.75);
+}
+
+@media (max-width: 780px) {
+  .catalog-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .catalog-brands {
+    position: static;
+    max-height: none;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+}
+
 .tobacco-card {
   gap: 6px;
 }
@@ -782,10 +855,6 @@ textarea {
   font-weight: 600;
 }
 
-.inventory-session-card .guest-card-meta {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 .pill-inline-warn {
   background: rgba(214, 160, 74, 0.22);
   color: #f0c98a;
@@ -881,21 +950,7 @@ textarea {
   white-space: nowrap;
 }
 
-/* Document editor built from inventory diffs */
-.doc-editor {
-  margin-top: 16px;
-  padding: 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(214, 160, 74, 0.35);
-  background: rgba(72, 43, 31, 0.4);
-  display: grid;
-  gap: 10px;
-}
-
-.doc-editor h4 {
-  margin: 0;
-}
-
+/* Строки документа (страница документа) */
 .doc-lines {
   display: grid;
   gap: 8px;
@@ -934,6 +989,36 @@ textarea {
   width: 100%;
 }
 
+/* Страница документа: открывается вместо реестра */
+.doc-page {
+  display: grid;
+  gap: 14px;
+}
+
+.doc-page-head {
+  display: grid;
+  gap: 6px;
+}
+
+.doc-page-head h3 {
+  margin: 0;
+}
+
+.doc-page-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: rgba(243, 224, 208, 0.6);
+}
+
+.doc-page-body {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(214, 160, 74, 0.22);
+}
+
 /* Created documents history */
 .doc-history {
   margin-top: 16px;
@@ -957,9 +1042,55 @@ textarea {
   color: rgba(243, 224, 208, 0.6);
 }
 
-.doc-history-lines {
-  display: grid;
-  gap: 2px;
-  font-size: 0.85rem;
-  color: rgba(243, 224, 208, 0.82);
+/* Строка-ссылка: вся строка открывает карточку (документ, инвентаризация) */
+.clickable-row {
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.clickable-row:hover,
+.clickable-row:focus-visible {
+  background: rgba(72, 43, 31, 0.62);
+  border-color: rgba(214, 160, 74, 0.35);
+  outline: none;
+}
+
+/* Строка реестра: шапка + итоги, состав открывается на странице документа */
+.doc-history-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.doc-row-main,
+.doc-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.doc-row-meta {
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.doc-row-total {
+  font-size: 0.9rem;
+  color: rgba(243, 224, 208, 0.86);
+}
+
+.doc-row-flag {
+  color: rgba(233, 166, 118, 0.9);
+}
+
+@media (max-width: 640px) {
+  .doc-history-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .doc-row-meta {
+    justify-content: flex-start;
+  }
 }

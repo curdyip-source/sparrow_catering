@@ -174,6 +174,13 @@ class StockDocumentCreate(BaseModel):
         return self
 
 
+class StockDocumentUpdate(BaseModel):
+    """Правка существующего документа: вид не меняется, строки переписываются целиком."""
+
+    comment: Optional[str] = Field(default=None, max_length=2000)
+    lines: list[StockDocumentLineInput] = Field(min_length=1)
+
+
 class StockDocumentLineRead(BaseModel):
     tobacco_id: int
     brand: str

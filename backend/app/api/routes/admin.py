@@ -49,8 +49,10 @@ from app.schemas.admin import (
     OrderWorkRangeRead,
     StockBalanceRead,
     StockDocumentCreate,
+    StockDocumentLineInput,
     StockDocumentLineRead,
     StockDocumentRead,
+    StockDocumentUpdate,
     StockMovementCreate,
     StockMovementRead,
     TobaccoCreate,
@@ -642,18 +644,19 @@ def update_inventory_line(
     return serialize_inventory_line(line)
 
 
-def _build_document(
+def _fill_document(
     db: Session,
-    payload: StockDocumentCreate,
+    document: StockDocument,
+    lines: list[StockDocumentLineInput],
     *,
-    inventory_session_id: int | None,
     allowed_ids: set[int] | None = None,
-) -> StockDocument:
-    """Создать документ оприходования/списания и его движения.
-    allowed_ids — ограничение по позициям (для документов из инвентаризации)."""
-    sign = 1.0 if payload.kind is StockMovementKind.receipt else -1.0
-    document = StockDocument(kind=payload.kind, inventory_session_id=inventory_session_id, comment=payload.comment)
-    for entry in payload.lines:
+) -> None:
+    """Переписать строки документа: старые движения удаляются (cascade
+    delete-orphan), новые собираются из lines. allowed_ids — ограничение по
+    позициям (для документов из инвентаризации)."""
+    sign = 1.0 if document.kind is StockMovementKind.receipt else -1.0
+    document.movements.clear()
+    for entry in lines:
         if allowed_ids is not None and entry.tobacco_id not in allowed_ids:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -665,19 +668,41 @@ def _build_document(
         document.movements.append(
             StockMovement(
                 tobacco_id=entry.tobacco_id,
-                kind=payload.kind,
+                kind=document.kind,
                 delta_grams=sign * entry.grams,
                 cost_per_gram=entry.cost_per_gram,
-                inventory_session_id=inventory_session_id,
-                comment="Оприходование" if payload.kind is StockMovementKind.receipt else "Списание",
+                inventory_session_id=document.inventory_session_id,
+                comment="Оприходование" if document.kind is StockMovementKind.receipt else "Списание",
             )
         )
         # При оприходовании с ценой обновляем себестоимость позиции (последняя цена).
-        if payload.kind is StockMovementKind.receipt and entry.cost_per_gram is not None:
+        if document.kind is StockMovementKind.receipt and entry.cost_per_gram is not None:
             item.cost_per_gram = entry.cost_per_gram
 
+
+def _build_document(
+    db: Session,
+    payload: StockDocumentCreate,
+    *,
+    inventory_session_id: int | None,
+    allowed_ids: set[int] | None = None,
+) -> StockDocument:
+    """Создать документ оприходования/списания и его движения."""
+    document = StockDocument(kind=payload.kind, inventory_session_id=inventory_session_id, comment=payload.comment)
+    _fill_document(db, document, payload.lines, allowed_ids=allowed_ids)
     db.add(document)
     db.commit()
+    return document
+
+
+def load_document(db: Session, document_id: int) -> StockDocument:
+    document = db.scalar(
+        select(StockDocument)
+        .options(joinedload(StockDocument.movements).joinedload(StockMovement.tobacco))
+        .where(StockDocument.id == document_id)
+    )
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Документ не найден")
     return document
 
 
@@ -717,13 +742,30 @@ def create_stock_document(
 ) -> StockDocumentRead:
     """Самостоятельный документ оприходования/списания (без инвентаризации)."""
     document = _build_document(db, payload, inventory_session_id=None)
-    return serialize_stock_document(
-        db.scalar(
-            select(StockDocument)
-            .options(joinedload(StockDocument.movements).joinedload(StockMovement.tobacco))
-            .where(StockDocument.id == document.id)
-        )
-    )
+    return serialize_stock_document(load_document(db, document.id))
+
+
+@router.put("/stock/documents/{document_id}", response_model=StockDocumentRead)
+def update_stock_document(
+    document_id: int,
+    payload: StockDocumentUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> StockDocumentRead:
+    """Переписать строки документа: количества и себестоимость. Вид документа и
+    привязка к инвентаризации сохраняются, остатки пересчитываются автоматически
+    (старые движения документа удаляются вместе со строками)."""
+    document = load_document(db, document_id)
+
+    allowed_ids: set[int] | None = None
+    if document.inventory_session_id is not None:
+        session = load_session(db, document.inventory_session_id)
+        allowed_ids = {line.tobacco_id for line in session.lines}
+
+    document.comment = payload.comment
+    _fill_document(db, document, payload.lines, allowed_ids=allowed_ids)
+    db.commit()
+    return serialize_stock_document(load_document(db, document_id))
 
 
 @router.post("/inventories/{session_id}/documents", response_model=InventorySessionDetail, status_code=status.HTTP_201_CREATED)
