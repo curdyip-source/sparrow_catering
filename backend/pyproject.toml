@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sparrow-catering-backend"
-version = "0.1.0"
+version = "1.0.0"
 description = "FastAPI backend for SP.ARROW catering MVP"
 requires-python = ">=3.9"
 dependencies = [
