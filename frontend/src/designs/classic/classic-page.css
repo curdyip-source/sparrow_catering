@@ -1,0 +1,54 @@
+/* Оформление страницы для дизайна «Классика» — то, что раньше лежало глобально
+   в index.css и в первом правиле App.css. Теперь всё под html[data-design], чтобы
+   остальные дизайны рисовали свой фон и свою ширину колонки. */
+
+html[data-design='classic'] {
+  font-family: 'Avenir Next', 'Segoe UI', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #f2e5d6;
+  background:
+    linear-gradient(rgba(244, 221, 198, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(244, 221, 198, 0.08) 1px, transparent 1px),
+    radial-gradient(circle at top, rgba(156, 103, 67, 0.18) 0%, rgba(156, 103, 67, 0) 30%),
+    linear-gradient(180deg, #4e2f22 0%, #3b241b 52%, #2c1a14 100%);
+  background-size: 32px 32px, 32px 32px, auto, auto;
+}
+
+html[data-design='classic'] body {
+  color: #f2e5d6;
+}
+
+html[data-design='classic'] h1,
+html[data-design='classic'] h2,
+html[data-design='classic'] h3 {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: #fff6ec;
+}
+
+html[data-design='classic'] h1 {
+  font-size: clamp(1.65rem, 2.7vw, 3.05rem);
+  line-height: 1.08;
+  max-width: 18ch;
+  margin-bottom: 18px;
+}
+
+html[data-design='classic'] h2,
+html[data-design='classic'] h3 {
+  font-size: clamp(1.35rem, 2vw, 1.9rem);
+  line-height: 1.1;
+}
+
+html[data-design='classic'] input:focus,
+html[data-design='classic'] textarea:focus {
+  border-color: rgba(234, 178, 120, 0.42);
+  box-shadow: 0 0 0 4px rgba(234, 178, 120, 0.12);
+}
+
+html[data-design='classic'] #root {
+  width: min(760px, calc(100% - 36px));
+  margin: 0 auto;
+  padding: 72px 0 72px;
+}

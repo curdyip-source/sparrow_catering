@@ -1,8 +1,5 @@
-#root {
-  width: min(760px, calc(100% - 36px));
-  margin: 0 auto;
-  padding: 72px 0 72px;
-}
+/* Ширина колонки и фон страницы переехали в designs/classic/classic-page.css —
+   здесь остаются только классы карточки расчёта. */
 
 .page-shell,
 .calculator-shell,
